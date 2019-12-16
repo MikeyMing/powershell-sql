@@ -1,6 +1,9 @@
 $DBAInstance = ""
 $DBADatabase = ""
 $smtpserver = ""
+#$DBAInstance = "."
+#$DBADatabase = "DBA"
+#$smtpserver = "10.202.170.15"
 [int]$ProgressInterval = 2
 
 
@@ -23,6 +26,7 @@ Catch
     }
 
 ##Check the SMTP Settings.
+$SMTPEnabled = $false
 If ($(Test-NetConnection -ComputerName $smtpserver -Port 25 -InformationLevel Quiet) -eq $false)
     {
     If ($smtpserver -eq "")
@@ -33,6 +37,10 @@ If ($(Test-NetConnection -ComputerName $smtpserver -Port 25 -InformationLevel Qu
         {
         Write-Warning "The SMTP server setting specified is not accessible.  Emails will not be sent.  The value given is '$($smtpserver)'.  "
         }
+    }
+Else
+    {
+    $SMTPEnabled = $true
     }
 
 Function Get-AUthSchemeAndServiceAccount([string]$Server)
@@ -1128,7 +1136,7 @@ Finally
         {
         SendEMail -Subject $mailsubject -msg $mailmessage -Address $EmailAddress -FromAddress $FromAddress
         }
-    Log "Finished"
+    Log "Finished." -WriteToHost
     }
 }
 
@@ -1610,14 +1618,20 @@ Try
     If ($ExecutionID -ne $null)
         {
         $logresultsSQL  = "SELECT  message, level, errordetails, errorline  FROM log WITH (NOLOCK) WHERE executionID = '$ExecutionID' ORDER BY logid DESC"
-        $logResults = Invoke-Sqlcmd -ServerInstance $dbainstance -Database $dbadatabase -Query $logresultsSQL
+        If ($loggingEnabled)
+            {
+            $logResults = Invoke-Sqlcmd -ServerInstance $dbainstance -Database $dbadatabase -Query $logresultsSQL
+            }
         $logresultstext = $logResults | Format-Table -AutoSize| Out-String 
         $logresultstext = "`n`nNote that single quotes have been stripped from the log.  `n" + $logresultstext + " Run the following query for more details `n`n`n SELECT * FROM Log WHERE ExecutionID = '$ExecutionID' ORDER BY datetime DESC"
         }
     $messageBody = $msg + "`n`n" + $params + "`n`n" + $logresultstext 
     if ($Subject -eq $null) { $Subject = ""}
     if ($Subject -eq "") { $Subject = "" }
-    Send-MailMessage -SmtpServer $smtpserver -Subject $Subject  -Body $messageBody -From $messageFrom -To $messageTo -ErrorAction Stop
+    If ($SMTPEnabled)
+        {
+        Send-MailMessage -SmtpServer $smtpserver -Subject $Subject  -Body $messageBody -From $messageFrom -To $messageTo -ErrorAction Stop
+        }
     } Catch { Log "Failed to send email." "Error" ; Throw }
 }
 
@@ -2268,10 +2282,6 @@ function Write-SQLDatabaseCompatibilityLevel ($instancename, $databasename, $com
 Try
     {
     $CompatabilityLevelSQL = "ALTER DATABASE [$databasename] SET COMPATIBILITY_LEVEL = $compatibilityLevel"
-    Log -message "In Write-compatability" -Level Info -WriteToHost
-    Log -message $CompatabilityLevelSQL -Level Info  -WriteToHost
-    log -message $instancename -Level Info -WriteToHost
-    log -message $databasename -Level Info -WriteToHost
     Invoke-Sqlcmd -ServerInstance $instancename -Database master -Query $CompatabilityLevelSQL -AbortOnError
     } Catch { Log "Error setting compatability level" "Error" ; Throw }
 }
