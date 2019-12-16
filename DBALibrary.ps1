@@ -1,9 +1,7 @@
 $DBAInstance = ""
 $DBADatabase = ""
 $smtpserver = ""
-#$DBAInstance = "."
-#$DBADatabase = "DBA"
-#$smtpserver = "10.202.170.15"
+
 [int]$ProgressInterval = 2
 
 
