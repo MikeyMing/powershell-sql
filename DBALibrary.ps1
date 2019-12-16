@@ -1,11 +1,39 @@
-
-
-if ((test-path variable:SCRIPT:executionid) -eq $false ) { $ExecutionID = $([GUID]::newGuid()).Guid }
-
 $DBAInstance = "."
 $DBADatabase = "DBA"
 $smtpserver = "10.202.170.15"
 [int]$ProgressInterval = 2
+
+
+if ((test-path variable:SCRIPT:executionid) -eq $false ) { $ExecutionID = $([GUID]::newGuid()).Guid }
+
+##Enable logging if the log table connection details are correct
+$loggingEnabled = $false
+$LoggingTestSQL = "select top 1 Logid from log"
+Write-Host "Testing the log table."
+Try
+    {
+    $LoggingTest = Invoke-Sqlcmd -ServerInstance $DBAInstance -Database $DBADatabase -Query $LoggingTestSQL -ConnectionTimeout 2 -ErrorAction SilentlyContinue
+    Write-Host "The log table is accessible so enabling logging."
+    $loggingEnabled = $true
+    }
+Catch
+    {
+    Write-Warning "The log table is not accessible so disbling logging to SQL Database table.  `nIf you require database logging, please furnish the '`$DBAInstance' and '`$DBADatabase' variables in the script. `nThe script can be found in the following location:`n`n$($myInvocation.MyCommand.Definition) "
+    $loggingEnabled = $false
+    }
+
+##Check the SMTP Settings.
+If ($(Test-NetConnection -ComputerName $smtpserver -Port 25 -InformationLevel Quiet) -eq $false)
+    {
+    If ($smtpserver -eq "")
+        {
+        Write-Warning "The SMTP server settings have not been specified. Emails will not be sent. Please furnish the '`$smtpserver' variable.  The script can be found in the following location:`n`n$($myInvocation.MyCommand.Definition)"
+        }
+    Else
+        {
+        Write-Warning "The SMTP server setting specified is not accessible.  Emails will not be sent.  The value given is '$($smtpserver)'.  "
+        }
+    }
 
 Function Get-AUthSchemeAndServiceAccount([string]$Server)
 {
@@ -155,7 +183,10 @@ Try
         {
         [string]$logQuery = "EXEC sp_log @Message = '" + $message + "', @ScriptName = '" + $MyInvocation.ScriptName + "', @FunctionName = '" + $($(Get-Variable MyInvocation -Scope 1).Value.MyCommand.Name) + "', @Level = '" + "Info" + "', @ExecutionId = '" + $ExecutionID + "', @ScriptLineNumber ='" + $MyInvocation.ScriptLineNumber + "' , @Note = '" + $Note + "'"
         }
-    Invoke-Sqlcmd -ServerInstance $dbainstance -Database $dbadatabase -Query $logQuery 
+    If ($loggingEnabled)
+        {
+        Invoke-Sqlcmd -ServerInstance $dbainstance -Database $dbadatabase -Query $logQuery 
+        }
     } Catch {Write-Host "Error in log" -ForegroundColor Red ; Throw }
 }
 
@@ -2326,7 +2357,6 @@ WHERE sp.sid IS NULL AND dp.type IN ('S','U') AND dp.name NOT IN ('guest','sys',
 Catch {  Log "Error getting users without logins" -Level Error -WriteToHost ;  Throw }
 }
 
-
 function get-RowCountsForDatabase ($instance, $database)
 {
 $rcSQL = @"
@@ -2341,8 +2371,6 @@ SELECT table_name, row_count FROM #counts ORDER BY  row_count DESC
 DROP TABLE #counts
 "@
 Invoke-Sqlcmd -ServerInstance $instance -Database $database -Query $rcSQL}
-
-
 
 function Backup (
 [string]$Instance, 
