@@ -2,9 +2,6 @@ $DBAInstance = ""
 $DBADatabase = ""
 $smtpserver = ""
 
-[int]$ProgressInterval = 2
-
-
 if ((test-path variable:SCRIPT:executionid) -eq $false ) { $ExecutionID = $([GUID]::newGuid()).Guid }
 
 ##Enable logging if the log table connection details are correct
@@ -803,7 +800,7 @@ Try
     If (!$DontCheckSpace -and !$Differential)
         {
         $s = Get-FileListFromDatabase -instance $SourceInstance -Database $SourceDatabase
-        $s
+        #$s
         log -message $($s | Out-String) -Level Info
         $SpaceRequired = Get-space -sourcefilelist $s -Instance $TargetInstance -database $TargetDatabase -CreateDatabase $CreateDatabase
         $SpaceRequired
@@ -1044,7 +1041,7 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
 
     If (!$NoRecovery)
         {
-        Log -message "Setting PAGE_VERIFY CHECKSUM" -Level Info -WriteToHost
+        Log -message "Setting PAGE_VERIFY CHECKSUM" -Level Info
         Invoke-Sqlcmd -ServerInstance $TargetInstance -Database $TargetDatabase -Query "ALTER DATABASE [$TargetDatabase] SET PAGE_VERIFY CHECKSUM"
         }
 
@@ -1110,7 +1107,7 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
     $BackupAndRestoreEndTime = get-date
     $runtime = New-TimeSpan -Start $BackupAndRestoreStartTime -End $BackupAndRestoreEndTime
     $ElapsedString = $(“Elapsed Time: {0}:{1}:{2}” -f $RunTime.Hours,$Runtime.Minutes,$RunTime.Seconds)
-    log -message $ElapsedString -Level Info -WriteToHost
+    log -message "Finished. $ElapsedString" -Level Info -WriteToHost
     $mailmessage = "$ElapsedString`n" + $mailmessage
     $mailmessage = $mailmessage + $NoLoginsSTring
 
@@ -1134,7 +1131,7 @@ Finally
         {
         SendEMail -Subject $mailsubject -msg $mailmessage -Address $EmailAddress -FromAddress $FromAddress
         }
-    Log "Finished." -WriteToHost
+    Log "Finished."
     }
 }
 
@@ -2462,4 +2459,307 @@ AND database_id = DB_ID()
 ORDER by LastUpdate DESC
 "@
 Invoke-Sqlcmd -ServerInstance $instance -Database $Database -Query $LastUpdateSQL
+}
+
+function Write-SQLUserRoles ([string]$instancename, [string]$databasename, $roles)
+{
+ Try
+    {
+    foreach ($principal in $roles)
+        {
+        $userSQL = @"
+IF USER_ID('$($principal.DatabaseUserName)') IS NULL CREATE USER [$($principal.DatabaseUserName)] FOR LOGIN [$($principal.ServerLoginName)]; 
+EXECUTE sp_addrolemember $($principal.RoleName), '$($principal.DatabaseUserName)'
+"@
+
+        Invoke-Sqlcmd -ServerInstance $instancename -Database $databasename -Query $userSQL -AbortOnError
+        }
+    } Catch { Log "Error adding back users." "Error" ; Throw "error adding users" }
+}
+
+function Create-Logins ([string]$SourceInstance, [string]$SourceDatabase, [string]$TargetInstance, [string]$TargetDatabase)
+{
+Try
+    {
+    $SourceLogins = Get-LoginCreationCommandsForDatabase -instance $SourceInstance -database $SourceDatabase
+    ForEach ($login in $SourceLogins)
+        {
+        If ($(LoginExists -instance $TargetInstance -login $login.Login) -eq $false)
+            {
+            log "Login $($login.login) does not exists.  Creating it."
+            Invoke-Sqlcmd -ServerInstance $TargetInstance -Database master -Query $($login.createString)
+            }
+        Else
+            {
+            Log "Login $($login.login) already exists."
+            }
+        }
+    } Catch {Log "Error creating logins" "Error" ; Throw }
+ }
+
+ Function ShrinkLog ($instancename, $databasename)
+{
+Try
+    {
+    $ShrinkLogSQL = @"
+DECLARE @LogName nvarchar(128)
+select @LogName =   name from sys.master_files where database_id = DB_ID() and type = 1
+PRINT @LogName
+DBCC SHRINKFILE (@LogName , 0, TRUNCATEONLY)
+"@
+    Invoke-Sqlcmd -ServerInstance $instancename -Database $databasename -Query $ShrinkLogSQL | Out-Null
+    } Catch { Log "Error shrinking log." "Error" ; Throw }
+}
+
+function CHange-Collation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
+{
+[string]$DropIndexCommands = Get-DropStatementsForCollation -Instance $Instance -Database $Database -Collation Latin1_General_CI_AS
+log -message $DropIndexCommands
+[string]$CreateIndexCommands = Get-CreateStatementsForCollation -Instance $Instance -Database $Database -Collation Latin1_General_CI_AS
+log -message $DropIndexCommands
+if ($DropIndexCommands.Length -ne 0) { Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $DropIndexCommands }
+Set-DatabaseCollation -Instance $Instance -Database $Database -Collation Latin1_General_CI_AS
+if ($CreateIndexCommands.Length -ne 0) { Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $CreateIndexCommands }
+}
+
+function Set-DatabaseCollation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
+{
+Try
+    {
+    $ChangeCollationSQL = @"
+--select DB_NAME(DB_ID())
+DECLARE @DB sysname =  DB_NAME(DB_ID())
+DECLARE @NewCollation nvarchar(400) = 'Latin1_General_CI_AS'
+DECLARE @ExistingCollation nvarchar(100) 
+SELECT @ExistingCollation =   collation_name  FROM sys.databases  WHERE name = @DB;  
+PRINT 'Database before = ' + @ExistingCollation
+
+IF @ExistingCollation <> @NewCollation 
+BEGIN
+      DECLARE @SQLALTER nvarchar(max) = 'ALTER DATABASE [' + @DB + ']  COLLATE Latin1_General_CI_AS ;' 
+      SET @SQLALTER = 'ALTER DATABASE [' + @DB + '] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; ' + @SQLALTER + '  ALTER DATABASE [' + @DB + '] SET MULTI_USER;'
+      PRINT @SQLALTER
+      EXEC (@SQLALTER)
+
+      DECLARE @CheckCollation nvarchar(400) 
+      SELECT @CheckCollation = collation_name FROM sys.databases WHERE name = @DB;  
+      PRINT 'Database after = ' + @CheckCollation
+END
+ELSE PRINT 'Collation is already at ' + @Newcollation
+
+DECLARE @SQLUSE nvarchar(400) = 'USE [' + @DB + ']'
+EXEC (@SQLUSE)
+
+DECLARE C CURSOR FOR
+	SELECT 'ALTER TABLE ['  + sys.schemas.name + '].[' + SYSOBJECTS.Name + '] ALTER COLUMN [' + SYSCOLUMNS.Name + '] ' +
+SYSTYPES.name + 
+    CASE systypes.NAME
+    WHEN 'text' THEN ' '
+    ELSE
+    '(' + RTRIM(CASE SYSCOLUMNS.length WHEN -1 THEN 'MAX' ELSE CASE WHEN systypes.name IN ('nvarchar', 'ntext') THEN CONVERT(CHAR,SYSCOLUMNS.length /2 ) ELSE CONVERT(CHAR,SYSCOLUMNS.length  ) END END  ) + ') ' 
+    END
+
+    + ' ' + ' COLLATE Latin1_General_CI_AS ' + CASE ISNULLABLE WHEN 0 THEN 'NOT NULL' ELSE 'NULL' END
+      --,sysobjects.name
+      --,syscolumns.name
+      --,syscolumns.collation
+    FROM SYSCOLUMNS , SYSOBJECTS , SYSTYPES, sys.schemas, sys.objects
+    WHERE SYSCOLUMNS.ID = SYSOBJECTS.ID
+	AND sysobjects.id = sys.objects.object_id
+	AND sys.schemas.schema_id = sys.objects.schema_id
+    AND SYSOBJECTS.TYPE = 'U'
+    AND SYSTYPES.Xtype = SYSCOLUMNS.xtype
+    AND SYSCOLUMNS.COLLATION IS NOT NULL AND SYSCOLUMNS.COLLATION <> 'Latin1_General_CI_AS'
+    AND NOT ( sysobjects.NAME LIKE 'sys%' )
+    AND NOT ( SYSTYPES.name LIKE 'sys%' )
+    and not exists (select * from sys.indexes where object_id = sys.objects.object_id and index_id = 1)
+    GO
+
+      OPEN C
+      DECLARE @SQL nvarchar(max)
+      FETCH NEXT FROM C INTO @SQL
+
+      WHILE @@FETCH_STATUS = 0
+      BEGIN
+            PRINT @SQL
+            EXEC (@SQL)
+            FETCH NEXT FROM C INTO @SQL
+      END
+
+      CLOSE C
+      DEALLOCATE c
+"@
+
+    Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $ChangeCollationSQL | Out-String
+
+    } Catch {log -message "Error changing collation" -Level Error ; Throw }
+
+}
+
+function Get-CreateStatementsForCollation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
+{
+Try
+    {
+    $CreateSQL = @"
+DECLARE @DB sysname =  DB_NAME(DB_ID())
+DECLARE @NewCollation nvarchar(400) = '$Collation'
+DECLARE @ExistingCollation nvarchar(100) 
+SELECT @ExistingCollation =   collation_name  FROM sys.databases  WHERE name = @DB;  
+PRINT 'Database before = ' + @ExistingCollation
+
+IF OBJECT_ID('tempdb..#badIndexes') IS NOT NULL DROP TABLE #badIndexes
+IF OBJECT_ID('tempdb..#Create') IS NOT NULL DROP TABLE #Create
+CREATE TABLE #Create (CreateSQL nvarchar(max) )
+
+SELECT i.object_id
+INTO #badIndexes
+FROM sys.columns c
+JOIN sys.objects o ON o.object_id = c.object_id
+JOIN sys.indexes i ON i.object_id = o.object_id
+WHERE collation_name <> @NewCollation
+AND is_ms_shipped = 0
+AND i.type_desc = 'NONCLUSTERED'
+
+declare @SchemaName varchar(100)declare @TableName varchar(256)
+declare @IndexName varchar(256)
+declare @ColumnName varchar(100)
+declare @is_unique varchar(100)
+declare @IndexTypeDesc varchar(100)
+declare @FileGroupName varchar(100)
+declare @is_disabled varchar(100)
+declare @IndexOptions varchar(max)
+declare @IndexColumnId int
+declare @IsDescendingKey int 
+declare @IsIncludedColumn int
+declare @TSQLScripCreationIndex varchar(max)
+declare @TSQLScripDisableIndex varchar(max)
+
+declare CursorIndex cursor for
+select schema_name(t.schema_id) [schema_name], t.name, ix.name,
+case when ix.is_unique = 1 then 'UNIQUE ' else '' END 
+ , ix.type_desc,
+case when ix.is_padded=1 then 'PAD_INDEX = ON, ' else 'PAD_INDEX = OFF, ' end
++ case when ix.allow_page_locks=1 then 'ALLOW_PAGE_LOCKS = ON, ' else 'ALLOW_PAGE_LOCKS = OFF, ' end
++ case when ix.allow_row_locks=1 then  'ALLOW_ROW_LOCKS = ON, ' else 'ALLOW_ROW_LOCKS = OFF, ' end
++ case when INDEXPROPERTY(t.object_id, ix.name, 'IsStatistics') = 1 then 'STATISTICS_NORECOMPUTE = ON, ' else 'STATISTICS_NORECOMPUTE = OFF, ' end
++ case when ix.ignore_dup_key=1 then 'IGNORE_DUP_KEY = ON, ' else 'IGNORE_DUP_KEY = OFF, ' end
++ 'SORT_IN_TEMPDB = OFF, FILLFACTOR =' + CAST(ix.fill_factor AS VARCHAR(3)) AS IndexOptions
+, ix.is_disabled , FILEGROUP_NAME(ix.data_space_id) FileGroupName
+from sys.tables t 
+ inner join sys.indexes ix on t.object_id=ix.object_id
+ join #badIndexes b on b.object_id = ix.object_id
+where ix.type>0 and ix.is_primary_key=0 and ix.is_unique_constraint=0 --and schema_name(tb.schema_id)= @SchemaName and tb.name=@TableName
+and t.is_ms_shipped=0 and t.name<>'sysdiagrams'
+order by schema_name(t.schema_id), t.name, ix.name
+
+open CursorIndex
+fetch next from CursorIndex into  @SchemaName, @TableName, @IndexName, @is_unique, @IndexTypeDesc, @IndexOptions,@is_disabled, @FileGroupName
+
+while (@@fetch_status=0)
+begin
+declare @IndexColumns varchar(max)
+declare @IncludedColumns varchar(max)
+
+ set @IndexColumns=''
+set @IncludedColumns=''
+
+ declare CursorIndexColumn cursor for 
+  select col.name, ixc.is_descending_key, ixc.is_included_column
+  from sys.tables tb 
+  inner join sys.indexes ix on tb.object_id=ix.object_id
+  inner join sys.index_columns ixc on ix.object_id=ixc.object_id and ix.index_id= ixc.index_id
+  inner join sys.columns col on ixc.object_id =col.object_id  and ixc.column_id=col.column_id
+  where ix.type>0 and (ix.is_primary_key=0 or ix.is_unique_constraint=0)
+  and schema_name(tb.schema_id)=@SchemaName and tb.name=@TableName and ix.name=@IndexName
+  order by ixc.index_column_id
+
+ open CursorIndexColumn 
+ fetch next from CursorIndexColumn into  @ColumnName, @IsDescendingKey, @IsIncludedColumn
+
+ while (@@fetch_status=0)
+begin
+  if @IsIncludedColumn=0 
+   set @IndexColumns=@IndexColumns + @ColumnName  + case when @IsDescendingKey=1  then ' DESC, ' else  ' ASC, ' end
+  else 
+   set @IncludedColumns=@IncludedColumns  + @ColumnName  +', ' 
+
+  fetch next from CursorIndexColumn into @ColumnName, @IsDescendingKey, @IsIncludedColumn
+end
+
+close CursorIndexColumn
+deallocate CursorIndexColumn
+
+set @IndexColumns = substring(@IndexColumns, 1, len(@IndexColumns)-1)
+set @IncludedColumns = case when len(@IncludedColumns) >0 then substring(@IncludedColumns, 1, len(@IncludedColumns)-1) else '' end
+--  print @IndexColumns
+--  print @IncludedColumns
+
+set @TSQLScripCreationIndex =''
+set @TSQLScripDisableIndex =''
+set @TSQLScripCreationIndex='CREATE '+ @is_unique  +@IndexTypeDesc + ' INDEX ' +QUOTENAME(@IndexName)+' ON ' + QUOTENAME(@SchemaName) +'.'+ QUOTENAME(@TableName)+ '('+@IndexColumns+') '+ 
+  case when len(@IncludedColumns)>0 then CHAR(13) +'INCLUDE (' + @IncludedColumns+ ')' else '' end + CHAR(13)+'WITH (' + @IndexOptions+ ') ON ' + QUOTENAME(@FileGroupName) + ';'  
+if @is_disabled=1 
+  set  @TSQLScripDisableIndex=  CHAR(13) +'ALTER INDEX ' +QUOTENAME(@IndexName) + ' ON ' + QUOTENAME(@SchemaName) +'.'+ QUOTENAME(@TableName) + ' DISABLE;' + CHAR(13) 
+
+INSERT INTO #Create (CreateSQL) VALUES (@TSQLScripCreationIndex)
+
+fetch next from CursorIndex into  @SchemaName, @TableName, @IndexName, @is_unique, @IndexTypeDesc, @IndexOptions,@is_disabled, @FileGroupName
+end
+close CursorIndex
+deallocate CursorIndex
+SELECT DISTINCT * FROM #Create
+"@
+Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $CreateSQL | Select-Object -ExpandProperty CreateSQL | Out-String
+    } Catch { log -message "Error getting Create commands for collation" -Level Error ; Throw }
+
+}
+
+function Get-DropStatementsForCollation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
+{
+Try
+    {
+    $DropSQL = @"
+--select DB_NAME(DB_ID())
+DECLARE @DB sysname =  DB_NAME(DB_ID())
+DECLARE @NewCollation nvarchar(400) = '$Collation'
+DECLARE @ExistingCollation nvarchar(100) 
+SELECT @ExistingCollation =   collation_name  FROM sys.databases  WHERE name = @DB;  
+PRINT 'Database before = ' + @ExistingCollation
+IF OBJECT_ID('tempdb..#badIndexes') IS NOT NULL DROP TABLE #badIndexes
+SELECT i.object_id
+INTO #badIndexes
+FROM sys.columns c
+JOIN sys.objects o ON o.object_id = c.object_id
+JOIN sys.indexes i ON i.object_id = o.object_id
+WHERE collation_name <> @NewCollation
+AND is_ms_shipped = 0
+AND i.type_desc = 'NONCLUSTERED'
+DECLARE @SchemaName VARCHAR(256)DECLARE @TableName VARCHAR(256)
+DECLARE @IndexName VARCHAR(256)
+DECLARE @TSQLDropIndex VARCHAR(MAX)
+DECLARE CursorIndexes CURSOR FOR
+SELECT schema_name(t.schema_id), t.name,  i.name 
+ FROM sys.indexes i
+INNER JOIN sys.tables t ON t.object_id= i.object_id
+join #badIndexes b on b.object_id = i.object_id
+WHERE i.type>0 and t.is_ms_shipped=0 and t.name<>'sysdiagrams'
+and (is_primary_key=0 and is_unique_constraint=0)
+IF OBJECT_ID('tempdb..#drop') IS NOT NULL DROP TABLE #drop
+CREATE TABLE #drop (DropSQL nvarchar(max) )
+OPEN CursorIndexes
+FETCH NEXT FROM CursorIndexes INTO @SchemaName,@TableName,@IndexName
+WHILE @@fetch_status = 0
+BEGIN
+SET @TSQLDropIndex =  'DROP INDEX '+QUOTENAME(@SchemaName)+ '.' + QUOTENAME(@TableName) + '.' +QUOTENAME(@IndexName)
+PRINT @TSQLDropIndex
+INSERT INTO #drop (DropSQL) VALUES (@TSQLDropIndex)
+FETCH NEXT FROM CursorIndexes INTO @SchemaName,@TableName,@IndexName
+END
+CLOSE CursorIndexes
+DEALLOCATE CursorIndexes 
+SELECT DISTINCT * from #drop
+"@
+Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $DropSQL | Select-Object -ExpandProperty DropSQL
+    } Catch { log -message "Error getting drop commands for collation" -Level Error ; Throw }
+
 }
