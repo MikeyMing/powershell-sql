@@ -1,6 +1,7 @@
 $DBAInstance = ""
-$DBADatabase = ""
+$DBADatabase = "DBA"
 $smtpserver = ""
+$ProgressInterval = 2
 
 if ((test-path variable:SCRIPT:executionid) -eq $false ) { $ExecutionID = $([GUID]::newGuid()).Guid }
 
@@ -560,7 +561,7 @@ function BackupAndRestore (
 [bool]$RetainOwnerName = $false,
 [Parameter(Mandatory=$true)][ValidateSet('SIMPLE','FULL','Retain')][string]$RecoveryModel,
 [bool]$OverwriteTarget = $false,
-[Parameter(Mandatory=$true)][ValidateSet('SetLatest','Retain','100','110','120','130','140')][string]$CompatabilityLevel,
+[Parameter(Mandatory=$true)][ValidateSet('SetLatest','Retain','100','110','120','130','140','150')][string]$CompatabilityLevel,
 [bool]$ShrinkLog = $false,
 [bool]$WaitforManualRestore = $false,
 [bool]$CreateDatabase = $false,
@@ -578,9 +579,13 @@ function BackupAndRestore (
 [string]$ScriptToRunOnTarget,
 [switch]$ChangeCOllation,
 [ValidateSet("Latin1_General_CI_AS")][string]$Collation,
-[switch]$DontCheckSpace,
-[switch]$NoDBCC,
-[switch]$UpdateStats
+[bool]$DontCheckSpace,
+[bool]$NoDBCC,
+[bool]$UpdateStats,
+[int]$NumberOfBackupsToRetain,
+[string]$BlockSize = '65536',
+[string]$BufferCount = '50',
+[string]$MaxTransferSize = '2097152'
 )
 {
 #log -message "before try TakeSourceOffline = $TakeSourceOffline" -Level Info -WriteToHost -ForegroundColour Yellow
@@ -938,16 +943,16 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
         {
         
         Log "TargetBackupLocation = $TargetBackupLocation"
-        $jobs = $jobs + $(Backup-Database -instancename $TargetInstance -databasename $TargetDatabase -backuppath $TargetBackupLocation -ProgressID 2 -compress $Compress -JobName "TargetBackup" -Differential $Differential)
+        $jobs = $jobs + $(Backup-Database -instancename $TargetInstance -databasename $TargetDatabase -backuppath $TargetBackupLocation -ProgressID 2 -compress $Compress -JobName "TargetBackup" -Differential $Differential, $BlockSize, $BufferCount , $MaxTransferSize)
         }
     Progress2 -Jobdetailscollection $jobs
 
     If ($WaitforManualRestore)
         {
         Log "WaitforManualRestore was specified"
-                    $messageTo = "$($env:USERNAME)@BOURNE-LEISURE.CO.UK"
+                    $messageTo = "$($env:USERNAME)@XXX"
             $messageTo
-            $messageFrom = $messageTo = "$($env:USERNAME)@BOURNE-LEISURE.CO.UK"
+            $messageFrom = $messageTo = "$($env:USERNAME)@XXX"
             $messageBody = "WaitForManualRestore was specified.  The backups on the databases are now complete and the target now needs to be restored manually. Restore the database onto the target server using the backup file $SourceBackupLocation . `n`n The target server is $TargetInstance and the database name should be $TargetDatabase `n`nReturn to the script when complete and press a key to continue."
             Send-MailMessage -SmtpServer $smtpserver -From $messageFrom -To $messageTo -Subject "Restore of $TargetDatabase on $TargetInstance .  Action required." -Body $messageBody 
             Write-Host "WaitforManualRestore was specified."
@@ -1104,6 +1109,27 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
     #    Log -message "Source has been set offline." -Level Info
     #    }
     
+    if (($NumberOfBackupsToRetain -ne $null) )
+        {
+        log -message "-NumberOfBackupsToRetain = $NumberOfBackupsToRetain , deleting old backups"
+        $DeletePath = "$BackupPath\$($SourceInstance -replace "\\", "$")\$SourceDatabase\"
+        $AllFilesInFolder = @(gci $DeletePath )
+        $FilesToDelete = $AllFilesInFolder | Sort-Object -Property Name  | select -First $([math]::max($($AllFilesInFolder.Count - $numberofbackupstoretain),0))
+        foreach ($File in $FilesToDelete)
+            {
+            $file.Delete() 
+            }
+        If ($DontBackupTarget -eq $false)
+            {
+            $DeletePath = "$BackupPath\$($TargetInstance -replace "\\", "$")\$TargetDatabase\"
+            $AllFilesInFolder = @(gci $DeletePath )
+            $FilesToDelete = $AllFilesInFolder | Sort-Object -Property Name  | select -First $([math]::max($($AllFilesInFolder.Count - $numberofbackupstoretain),0))
+                {
+                $file.Delete() 
+                }
+            }
+        }
+
     $BackupAndRestoreEndTime = get-date
     $runtime = New-TimeSpan -Start $BackupAndRestoreStartTime -End $BackupAndRestoreEndTime
     $ElapsedString = $(“Elapsed Time: {0}:{1}:{2}” -f $RunTime.Hours,$Runtime.Minutes,$RunTime.Seconds)
@@ -1114,7 +1140,7 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
     }
 Catch
     {
-    Log "Error.  Final catch" "Error"
+    Log "Error.  Final catch" "Error" -WriteToHost
     $stacktrace = $Error[0].ScriptStackTrace
     $errorDetails = "ERROR: `n`n STACK TRACE: `n`n $stacktrace `n`n ERROR DETAILS: `n`n"
     $errorDetails = $errorDetails + $($Error[0] | Out-String) -replace "`'", ""
@@ -1436,29 +1462,29 @@ WHERE dpusers.name <> 'dbo'
     } Catch { Throw  }
 }
 
-function Backup-Database ([string]$instancename, [string]$databasename, [string]$backuppath, [bool]$compress = $false, [int]$ProgressID, [string]$JobName, [bool]$CopyOnly = $true, [bool]$Differential = $false)
+function Backup-Database ([string]$instancename, [string]$databasename, [string]$backuppath, [bool]$compress = $false, [int]$ProgressID, [string]$JobName, [bool]$CopyOnly = $true, [bool]$Differential = $false, $BlockSize = '65536',$BufferCount = '50',$MaxTransferSize = '2097152')
     {
 Try
     {
     Log "In Backup-Database"
     log "backuppath = $backuppath"
-    $BackupSQL = "BACKUP DATABASE [$databasename] TO DISK = '$backuppath'"
+    $BackupSQL = "BACKUP DATABASE [$databasename] TO DISK = '$backuppath' WITH BUFFERCOUNT = $BufferCount ,MAXTRANSFERSIZE = $MaxTransferSize ,BLOCKSIZE = $BlockSize  "
     Try
         {
-        $with = ""
-        If  ($CompressIfPossible -and ($Compress.toString() -ne "-1")) {$with = " WITH COMPRESSION "}
+       
+        If  ($CompressIfPossible -and ($Compress.toString() -ne "-1")) {$with = " ,COMPRESSION "}
         if($copyonly -and ($Differential -eq $false))
             {
-            if ($with -eq "") {$with = "WITH COPY_ONLY"} else { $with = $with + ", COPY_ONLY " }
+            $with = $with + ", COPY_ONLY " 
             }
         if($Differential )
             {
             Log "Adding DIFFERENTIAL"
 
-            if ($with -eq "") {$with = "WITH DIFFERENTIAL"} else { $with = $with + ", DIFFERENTIAL " }
+            $with = $with + ", DIFFERENTIAL " 
             }
         $BackupSQL = $BackupSQL + $with
-        Log "$BackupSQL"
+        Log "$BackupSQL" -WriteToHost
         Log $instancename
         } Catch {Log "Error adding with options" "Error" ; Throw }
 
@@ -1612,7 +1638,7 @@ Try
     Log -message $Address -Level Info
     If ($ExecutionID -ne $null)
         {
-        $logresultsSQL  = "SELECT  message, level, errordetails, errorline  FROM log WITH (NOLOCK) WHERE executionID = '$ExecutionID' ORDER BY logid DESC"
+        $logresultsSQL  = "SELECT  message, level, errordetails, errorline  FROM log WITH (NOLOCK) WHERE executionID = '$ExecutionID'"
         If ($loggingEnabled)
             {
             $logResults = Invoke-Sqlcmd -ServerInstance $dbainstance -Database $dbadatabase -Query $logresultsSQL
@@ -2511,7 +2537,7 @@ DBCC SHRINKFILE (@LogName , 0, TRUNCATEONLY)
     } Catch { Log "Error shrinking log." "Error" ; Throw }
 }
 
-function CHange-Collation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
+function Change-Collation ([string]$Instance, [string]$Database, [ValidateSet("Latin1_General_CI_AS")][string]$Collation)
 {
 [string]$DropIndexCommands = Get-DropStatementsForCollation -Instance $Instance -Database $Database -Collation Latin1_General_CI_AS
 log -message $DropIndexCommands
