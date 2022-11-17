@@ -585,7 +585,8 @@ function BackupAndRestore (
 [int]$NumberOfBackupsToRetain,
 [string]$BlockSize = '65536',
 [string]$BufferCount = '50',
-[string]$MaxTransferSize = '2097152'
+[string]$MaxTransferSize = '2097152',
+[bool]$DeleteOrphans = $false
 )
 {
 #log -message "before try TakeSourceOffline = $TakeSourceOffline" -Level Info -WriteToHost -ForegroundColour Yellow
@@ -943,7 +944,8 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
         {
         
         Log "TargetBackupLocation = $TargetBackupLocation"
-        $jobs = $jobs + $(Backup-Database -instancename $TargetInstance -databasename $TargetDatabase -backuppath $TargetBackupLocation -ProgressID 2 -compress $Compress -JobName "TargetBackup" -Differential $Differential, $BlockSize, $BufferCount , $MaxTransferSize)
+        
+        $jobs = $jobs + $(Backup-Database -instancename $TargetInstance -databasename $TargetDatabase -backuppath $TargetBackupLocation -ProgressID 2 -compress $Compress -JobName "TargetBackup" , $BlockSize, $BufferCount , $MaxTransferSize)
         }
     Progress2 -Jobdetailscollection $jobs
 
@@ -1076,6 +1078,13 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
             {
             $NoLoginsSTring = "The following  users without logins were found on $TargetDatabase on $TargetInstance :`n`n$($userswithnologins | Format-Table | Out-String)"
             Log -message $NoLoginsSTring -Level Warning -WriteToHost -ForegroundColour Yellow
+            IF($DeleteOrphans)
+                {
+                  Write-Host "Deleting Orphaned Users"
+                  Remove-Orphans -Instancename $TargetInstance -Databasename $TargetDatabase
+                  
+
+                }
             }
        }
 
@@ -1111,20 +1120,23 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
     
     if (($NumberOfBackupsToRetain -ne $null) )
         {
-        log -message "-NumberOfBackupsToRetain = $NumberOfBackupsToRetain , deleting old backups"
+        log -message "NumberOfBackupsToRetain = $NumberOfBackupsToRetain , deleting old backups"
+        Write-Host "NumberOfBackupsToRetain = $NumberOfBackupsToRetain , deleting old backups" -ForegroundColor Yellow
         $DeletePath = "$BackupPath\$($SourceInstance -replace "\\", "$")\$SourceDatabase\"
-        $AllFilesInFolder = @(gci $DeletePath )
+        $AllFilesInFolder = @(gci filesystem::$DeletePath )
         $FilesToDelete = $AllFilesInFolder | Sort-Object -Property Name  | select -First $([math]::max($($AllFilesInFolder.Count - $numberofbackupstoretain),0))
         foreach ($File in $FilesToDelete)
             {
+            Write-Host "Deleting: " $File " in " $DeletePath -ForegroundColor Yellow
             $file.Delete() 
             }
         If ($DontBackupTarget -eq $false)
             {
             $DeletePath = "$BackupPath\$($TargetInstance -replace "\\", "$")\$TargetDatabase\"
-            $AllFilesInFolder = @(gci $DeletePath )
+            $AllFilesInFolder = @(gci filesystem::$DeletePath )
             $FilesToDelete = $AllFilesInFolder | Sort-Object -Property Name  | select -First $([math]::max($($AllFilesInFolder.Count - $numberofbackupstoretain),0))
-                {
+            foreach ($File in $FilesToDelete){
+                Write-Host "Deleting: " $File " in " $DeletePath -ForegroundColor Yellow
                 $file.Delete() 
                 }
             }
@@ -1132,7 +1144,7 @@ The destination database ($TargetDatabase on $TargetInstance) $(if ($CreateDatab
 
     $BackupAndRestoreEndTime = get-date
     $runtime = New-TimeSpan -Start $BackupAndRestoreStartTime -End $BackupAndRestoreEndTime
-    $ElapsedString = $(“Elapsed Time: {0}:{1}:{2}” -f $RunTime.Hours,$Runtime.Minutes,$RunTime.Seconds)
+    $ElapsedString = $("Elapsed Time: {0}:{1}:{2}" -f $RunTime.Hours,$Runtime.Minutes,$RunTime.Seconds)
     log -message "Finished. $ElapsedString" -Level Info -WriteToHost
     $mailmessage = "$ElapsedString`n" + $mailmessage
     $mailmessage = $mailmessage + $NoLoginsSTring
@@ -1213,7 +1225,7 @@ SELECT @sqlVers = left(cast(serverproperty('productversion') as varchar), 4)
 SELECT SERVERPROPERTY('productversion') AS Version
 ,SERVERPROPERTY('productlevel') AS ServicePacklevel
 ,SERVERPROPERTY('edition') AS Edition
-,CASE @sqlVers WHEN '8.00' THEN 'SQL 2000' WHEN '9.00' THEN 'SQL 2005' WHEN '10.00' THEN 'SQL 2008' WHEN '10.50' THEN 'SQL 2008 R2' WHEN '11.00' THEN 'SQL 2012' WHEN '12.00' THEN 'SQL 2014' WHEN '13.00' THEN 'SQL 2016'  WHEN '14.00' THEN 'SQL 2017' END AS	ProductName
+,CASE @sqlVers WHEN '8.00' THEN 'SQL 2000' WHEN '9.00' THEN 'SQL 2005' WHEN '10.00' THEN 'SQL 2008' WHEN '10.50' THEN 'SQL 2008 R2' WHEN '11.00' THEN 'SQL 2012' WHEN '12.00' THEN 'SQL 2014' WHEN '13.00' THEN 'SQL 2016'  WHEN '14.00' THEN 'SQL 2017' WHEN '15.00' THEN 'SQL 2019' END AS	ProductName
 "@
     $ProductNameResult = Invoke-Sqlcmd -ServerInstance $Instance -Query $ProductNameSQL -AbortOnError
     $ProductNameResult.ProductName
@@ -1371,12 +1383,13 @@ WHERE sl.Server_name = '$instancename'
             {
             $BackupPath = "$BackupLocation\$($instancename -replace "\\", "$")\$databasename\"
             Log "BackupPath = $BackupPath"
+            Write-Host "Backup Path: " $BackupPath -ForegroundColor Green
             }
     If ($CreateIfNotExist)
         {
-         If ((Test-Path $BackupPath) -eq $false )
+         If ((Test-Path filesystem::$BackupPath) -eq $false )
             {
-            try { mkdir $BackupPath | Out-Null } Catch {Throw "Error creating backup path" }
+            try { mkdir filesystem::$BackupPath | Out-Null } Catch {Throw "Error creating backup path" }
             }
         }
     $dateForFileName = Get-Date -Format "yyyyMMddhhmm"
@@ -1432,6 +1445,7 @@ Try
         $path = Split-Path $path
         }
     $PathOnSQLServerSQL = "exec master.dbo.xp_fileexist '$path'"
+    Write-Host "PathOnSQLSever: " $PathOnSQLServerSQL -ForegroundColor Green
     $PathOnSQLServerResults = $(Invoke-sqlcmd -ServerInstance $instance -Database master -Query $PathOnSQLServerSQL ).'File is a Directory'
     If ($PathOnSQLServerResults -eq 1)
         {
@@ -2128,6 +2142,7 @@ Try
         {
         $MoveFiles = Get-MoveFiles -sourcefilelist $(Get-FileListFromBackupFile -backuppath $backuppath -instance $TargetInstance) -instance $TargetInstance -database $targetDatabase -sourcedatabase $sourceDatabase
         log "Movestatement = $MoveFiles"
+        Write-Host "Movestatement: " $MoveFiles -ForegroundColor Yellow
         }
     Else
         {
@@ -2155,7 +2170,8 @@ RESTORE DATABASE [$databasename] FROM DISK = '$backuppath' WITH STATS = 5 $Repla
             }
         }
     #Do restore here
-    Log $RestoreSQL 
+    Log $RestoreSQL
+    Write-Host "RestoreSQL: " $RestoreSQL -ForegroundColor Yellow 
     $job = Start-Job -Name $JobName -ScriptBlock { Invoke-Sqlcmd -ServerInstance $args[0] -Database master -Query $args[1] -QueryTimeout 65535 -ErrorAction Stop} -ArgumentList @($instancename, $RestoreSQL) 
     $jobdetails = @{job=$job ; Instance = $instancename ; Database = $databasename ; Path = $backuppath ; JobType = "BackupRestore" ; Id = Get-NextProgressId}
     $jobdetails
@@ -2189,23 +2205,30 @@ Try
     log "Default paths = $($defaultpaths.defaultfile) and "
     Log "sourcefilelist = $sourcefilelist , instance = $instance , database = $database , sourcedatabase = $sourcedatabase"
     $moves = @()
+    $CreateDBFolder = "exec master.dbo.xp_create_subdir '$($defaultpaths.defaultfile)$database\'"
+    Invoke-Sqlcmd -ServerInstance $instance -Database master -Query $CreateDBFolder
+
     foreach ($file in $sourcefilelist)
         {
         $PhysicalNameOnly = Split-Path $($file.physicalname) -Leaf
         $newNameonly = $physicalnameonly -replace $sourcedatabase , $database
+        $newFolderAndName= "$database\$newNameonly"
         Log $newNameonly
-        If ($CreateDatabase -and (Test-PathOnSQLServer -instance $instance -path $($defaultpaths.defaultfile)$newNameonly ) )
+        Log $newFolderAndName
+        Write-Host $newFolderAndName -ForegroundColor Magenta
+        
+        If ($CreateDatabase -and (Test-PathOnSQLServer -instance $instance -path $($defaultpaths.defaultfile)$newFolderAndName ) )
             {
-            Log -message "The file : $($defaultpaths.defaultfile)$newNameonly already exists." -Level Error
-            Throw "The file : $($defaultpaths.defaultfile)$newNameonly already exists."
+            Log -message "The file : $($defaultpaths.defaultfile)$newFolderAndName already exists." -Level Error
+            Throw "The file : $($defaultpaths.defaultfile)$newFolderAndName already exists."
             }
         If ($file.type -eq "D")
             {
-            $moves = $moves + "MOVE '$($file.logicalname)' TO '$($defaultpaths.defaultfile)$newNameonly' `n"
+            $moves = $moves + "MOVE '$($file.logicalname)' TO '$($defaultpaths.defaultfile)$newFolderAndName' `n"
             }
         ElseIf ($file.type -eq "L")
             {
-            $moves = $moves + "MOVE '$($file.logicalname)' TO '$($defaultpaths.defaultlog)$newNameonly' `n"
+            $moves = $moves + "MOVE '$($file.logicalname)' TO '$($defaultpaths.defaultlog)$newNameOnly' `n"
             }
         }
         $results = $(", $($moves -join ',')")
@@ -2788,4 +2811,31 @@ SELECT DISTINCT * from #drop
 Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $DropSQL | Select-Object -ExpandProperty DropSQL
     } Catch { log -message "Error getting drop commands for collation" -Level Error ; Throw }
 
+}
+
+
+function Remove-Orphans ([string]$Instancename, [string]$Databasename)
+{
+Try
+    {
+$SQLOrphans = "select u.name,
+	'exec sp_revokedbaccess ''' + u.name +'''' as [Script]
+from master..syslogins l right join 
+    sysusers u on l.sid = u.sid 
+    where l.sid is null and issqlrole <> 1 and isapprole <> 1   
+    and (u.name <> 'INFORMATION_SCHEMA' and u.name <> 'guest' and u.name <> 'sys' 
+    and u.name <> 'system_function_schema')"
+$Orphans = $(Invoke-Sqlcmd -ServerInstance $instancename -Database $databasename -Query $SQLOrphans).Script
+
+$OrphansDeleteSQL = $null
+ForEach ($Orphan in $Orphans){
+    $OrphansDeleteSQL = $OrphansDeleteSQL+$Orphan + "`n"
+}
+
+Write-Host $OrphansDeleteSQL -ForegroundColor Yellow
+
+    
+$OrphansDelete = $(Invoke-Sqlcmd -ServerInstance $instancename -Database $databasename -Query $OrphansDeleteSQL)
+$OrphansDelete 
+    } Catch { Throw  }
 }
