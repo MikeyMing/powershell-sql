@@ -1,2 +1,0 @@
-# powershell-sql
-DBA Routines
