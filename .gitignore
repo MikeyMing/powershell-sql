@@ -1,0 +1,2 @@
+# Local integration test settings (contains environment-specific values)
+Tests/IntegrationSettings.local.ps1
