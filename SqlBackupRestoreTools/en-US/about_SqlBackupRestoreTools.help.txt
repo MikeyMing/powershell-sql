@@ -1,0 +1,88 @@
+TOPIC
+    about_SqlBackupRestoreTools
+
+SHORT DESCRIPTION
+    Tools for copying SQL Server databases via backup/restore.
+
+LONG DESCRIPTION
+    SqlBackupRestoreTools is a PowerShell module focused on cloning/copying SQL Server databases
+    using BACKUP/RESTORE under the hood.
+
+    The primary entry point is BackupAndRestore.
+
+    This module intentionally keeps some legacy command names for compatibility:
+    - Get-DBALibraryConfig
+    - Set-DBALibraryConfig
+
+    The module supports:
+    - Filesystem/UNC backups via -BackupPath
+    - Azure Blob Storage backups via -AzureStorageBackupLocation (SAS URL)
+    - Optional SQL-backed logging to a dbo.Log table via -EnableDbLogging
+    - Optional email notifications (Send-MailMessage) and optional AD email autodiscovery
+
+GETTING STARTED
+    Install from the PowerShell Gallery:
+
+        Install-Module SqlBackupRestoreTools -Scope CurrentUser
+        Import-Module SqlBackupRestoreTools
+
+    See exported commands:
+
+        Get-Command -Module SqlBackupRestoreTools
+
+CONFIGURATION
+    Defaults are session-scoped. Configure once per session:
+
+        Set-DBALibraryConfig -DBAInstance 'SERVER\INSTANCE' -DBADatabase 'DBA' -SMTPEnabled $true -SmtpServer 'smtp.yourdomain.local'
+
+    View current configuration:
+
+        Get-DBALibraryConfig
+
+    Persist configuration per-user (recommended for a stable default backup location):
+
+        Set-DBALibraryConfig -DefaultBackupPath '\\fileserver\\sqlbackups' -Persist
+        Get-DBALibraryConfig -Persisted
+
+    On Windows, the persisted config file is stored under:
+        %APPDATA%\SqlBackupRestoreTools\config.json
+
+    To opt out of auto-loading persisted config on import, set:
+        $env:SQLBACKUPRESTORETOOLS_DISABLE_PERSISTED_CONFIG = '1'
+
+PREREQUISITES
+    - PowerShell 5.1+
+    - SqlServer module (Invoke-Sqlcmd)
+
+    Note: If you omit -EmailAddress, the module may try to discover your email using Get-ADUser.
+
+COMMON EXAMPLES
+    Common scenarios:
+    - Clone to a new database name (safe default)
+    - Overwrite an existing database name (destructive)
+    - Azure Blob Storage backup/restore
+    - Enable SQL-backed logging
+    - PreflightOnly / DryRun
+
+    Clone a database to a new target database:
+
+        BackupAndRestore -SourceInstance 'SERVER\INSTANCE' -SourceDatabase 'MyDb' \
+          -TargetInstance 'SERVER\INSTANCE' -TargetDatabase 'MyDb_Copy' \
+                    -BackupPath '\\fileserver\sqlbackups\staging' -BatchMode
+
+    Preflight only (validate parameters/connectivity without making changes):
+
+        BackupAndRestore -SourceInstance 'SERVER\INSTANCE' -SourceDatabase 'MyDb' \
+          -TargetInstance 'SERVER\INSTANCE' -TargetDatabase 'MyDb_Copy' \
+                    -BackupPath '\\fileserver\sqlbackups\staging' -PreflightOnly
+
+    Dry run (prints major steps/SQL without executing destructive actions):
+
+        BackupAndRestore -SourceInstance 'SERVER\INSTANCE' -SourceDatabase 'MyDb' \
+          -TargetInstance 'SERVER\INSTANCE' -TargetDatabase 'MyDb_Copy' \
+                    -BackupPath '\\fileserver\sqlbackups\staging' -DryRun
+
+SEE ALSO
+    Get-Help BackupAndRestore -Full
+    Get-Help Get-DBALibraryConfig -Full
+    Get-Help Set-DBALibraryConfig -Full

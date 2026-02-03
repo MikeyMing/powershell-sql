@@ -1,2 +1,5 @@
 # Local integration test settings (contains environment-specific values)
 Tests/IntegrationSettings.local.ps1
+
+# Local publish settings (contains secrets)
+PublishSettings.local.ps1

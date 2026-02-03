@@ -2,7 +2,7 @@
 
 A PowerShell module for copying SQL Server databases via backup/restore, with optional SQL-backed logging and email notifications.
 
-> This repo currently wraps the existing script implementation in `SqlBackupRestoreTools.ps1` for backwards compatibility.
+> This module wraps the existing script implementation in `SqlBackupRestoreTools.ps1` for backwards compatibility.
 
 ## PowerShell Gallery
 
@@ -16,13 +16,6 @@ Find-Module SqlBackupRestoreTools -AllVersions
 ```
 
 ## Install / Import
-
-From this repo root:
-
-```powershell
-Import-Module .\SqlBackupRestoreTools\SqlBackupRestoreTools.psd1 -Force
-Get-Command -Module SqlBackupRestoreTools
-```
 
 From the PowerShell Gallery:
 
@@ -41,6 +34,13 @@ Get-Command -Module SqlBackupRestoreTools
 
 # Remove
 # Uninstall-Module SqlBackupRestoreTools -AllVersions
+```
+
+From a local checkout (this repo):
+
+```powershell
+Import-Module .\SqlBackupRestoreTools.psd1 -Force
+Get-Command -Module SqlBackupRestoreTools
 ```
 
 ## Primary command
@@ -64,6 +64,28 @@ Defaults are intentionally generic for public distribution. Configure once per s
 Set-DBALibraryConfig -DBAInstance 'SERVER\INSTANCE' -DBADatabase 'DBA' -SMTPEnabled $true -SmtpServer 'smtp.yourdomain.local'
 Get-DBALibraryConfig
 ```
+
+Set a default backup location (used when you omit both `-BackupPath` and `-AzureStorageBackupLocation`):
+
+```powershell
+Set-DBALibraryConfig -DefaultBackupPath '\\fileserver\sqlbackups'
+```
+
+Persist config per-user (so you don't have to set it every session):
+
+```powershell
+Set-DBALibraryConfig -DefaultBackupPath '\\fileserver\sqlbackups' -Persist
+Get-DBALibraryConfig -Persisted
+```
+
+Clear persisted and/or session config:
+
+```powershell
+Clear-DBALibraryConfig -Persisted -Session
+```
+
+On Windows, the persisted config file is stored under:
+- `%APPDATA%\SqlBackupRestoreTools\config.json`
 
 ## Prerequisites
 
@@ -189,46 +211,10 @@ BackupAndRestore `
   -TakeTargetOffline $true
 ```
 
-Notes:
-- `CreateDatabase` now defaults to `$true` (safer default). Use `-CreateDatabase $false` when you intend to overwrite an existing target DB.
-```
-
-Notes:
-- `-BackupPath` and `-AzureStorageBackupLocation` are mutually exclusive.
-- The Azure access check validates the SAS token from the machine running PowerShell.
-- SQL Server BACKUP/RESTORE to URL uses a SQL credential; the module will auto-create a credential (requires `ALTER ANY CREDENTIAL`) when a SAS is provided.
-- If you provide an Azure URL without a SAS token, a matching credential must already exist on the SQL instance(s).
-
 ## Notes
 
 - `Send-MailMessage` is deprecated in PowerShell; this module currently uses it for compatibility.
 - SMTP delivery depends on your organization’s mail relay policy (allowed From/To, external relay, quarantine).
-
-## Publishing
-
-From the repo root:
-
-```powershell
-Publish-Module -Path .\SqlBackupRestoreTools -NuGetApiKey '<your api key>'
-```
-
-Safer option (avoid pasting secrets into chat / avoid command history):
-
-- Copy [PublishSettings.example.ps1](PublishSettings.example.ps1) to `PublishSettings.local.ps1` (gitignored)
-- Put your PSGallery API key in `PublishSettings.local.ps1`
-- Run:
-
-```powershell
-./Publish.ps1 -WhatIf   # dry run
-./Publish.ps1           # publish
-```
-
-CI option:
-
-```powershell
-$env:PSGALLERY_API_KEY = '<your api key>'
-./Publish.ps1
-```
 
 ## License
 
