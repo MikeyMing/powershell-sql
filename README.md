@@ -204,31 +204,7 @@ Notes:
 - `Send-MailMessage` is deprecated in PowerShell; this module currently uses it for compatibility.
 - SMTP delivery depends on your organization’s mail relay policy (allowed From/To, external relay, quarantine).
 
-## Publishing
 
-From the repo root:
-
-```powershell
-Publish-Module -Path .\SqlBackupRestoreTools -NuGetApiKey '<your api key>'
-```
-
-Safer option (avoid pasting secrets into chat / avoid command history):
-
-- Copy [PublishSettings.example.ps1](PublishSettings.example.ps1) to `PublishSettings.local.ps1` (gitignored)
-- Put your PSGallery API key in `PublishSettings.local.ps1`
-- Run:
-
-```powershell
-./Publish.ps1 -WhatIf   # dry run
-./Publish.ps1           # publish
-```
-
-CI option:
-
-```powershell
-$env:PSGALLERY_API_KEY = '<your api key>'
-./Publish.ps1
-```
 
 ## License
 
