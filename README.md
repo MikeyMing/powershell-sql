@@ -11,41 +11,19 @@ Why use it instead of doing it manually?
 - Fewer failures: preflight validation reduces mid-run blowups and wasted time.
 - Operational visibility: optional SQL-backed logging and email notifications.
 - One-line control: set key behavior/properties of the target database (safe clone vs overwrite, offline/restore options, verify-only, dry run, etc.) in a single command.
+- Manages the retention / deletion of backup files
+- Handles all the tasks normally associated with refreshing databases such as creating or preserving users.
 
 Why not just use dbatools?
 dbatools is excellent and very broad. SqlBackupRestoreTools is intentionally narrower and more opinionated: it standardizes a single “clone/refresh database” procedure with guardrails, logging, notifications, and a consistent interface for the options your team uses most.
 
 ## PowerShell Gallery
 
-- Package page: https://www.powershellgallery.com/packages/SqlBackupRestoreTools
-
-Discover from PowerShell:
-
-```powershell
-Find-Module SqlBackupRestoreTools -Repository PSGallery
-Find-Module SqlBackupRestoreTools -AllVersions
-```
-
-## Install / Import
-
-From this repo root:
-
-```powershell
-Import-Module .\SqlBackupRestoreTools\SqlBackupRestoreTools.psd1 -Force
-Get-Command -Module SqlBackupRestoreTools
-```
-
 From the PowerShell Gallery:
 
 ```powershell
 # First time only: you may be prompted to install the NuGet provider and/or trust PSGallery.
 Install-Module SqlBackupRestoreTools -Scope CurrentUser
-
-# Optional: trust PSGallery to avoid prompts
-# Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-
-Import-Module SqlBackupRestoreTools
-Get-Command -Module SqlBackupRestoreTools
 
 # Update later
 # Update-Module SqlBackupRestoreTools
