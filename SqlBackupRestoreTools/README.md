@@ -4,6 +4,17 @@ A PowerShell module for copying SQL Server databases via backup/restore, with op
 
 > This module wraps the existing script implementation in `SqlBackupRestoreTools.ps1` for backwards compatibility.
 
+SqlBackupRestoreTools is for reliably cloning or refreshing SQL Server databases using a repeatable backup/restore workflow. It’s designed for “start it and trust it” operations: it runs a set of preflight checks up front to catch common failure conditions early (permissions, paths, connectivity, prerequisites), so you can kick off a refresh and expect it to complete as quickly as possible without surprises.
+
+Why use it instead of doing it manually?
+- Speed: one command instead of a long checklist of SSMS steps.
+- Fewer failures: preflight validation reduces mid-run blowups and wasted time.
+- Operational visibility: optional SQL-backed logging and email notifications.
+- One-line control: set key behavior/properties of the target database (safe clone vs overwrite, offline/restore options, verify-only, dry run, etc.) in a single command.
+
+Why not just use dbatools?
+dbatools is excellent and very broad. SqlBackupRestoreTools is intentionally narrower and more opinionated: it standardizes a single “clone/refresh database” procedure with guardrails, logging, notifications, and a consistent interface for the options your team uses most.
+
 ## PowerShell Gallery
 
 - Package page: https://www.powershellgallery.com/packages/SqlBackupRestoreTools
