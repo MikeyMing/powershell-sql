@@ -58,6 +58,11 @@ Get-Command -Module SqlBackupRestoreTools
 
 - `BackupAndRestore`
 
+Standalone commands (for running just one half of the workflow):
+
+- `Backup-DbalDatabase`
+- `Restore-DbalDatabase`
+
 ## BackupAndRestore parameters (summary)
 
 Use `Get-Help BackupAndRestore -Full` for full details and examples. This is a quick discovery index.
@@ -79,7 +84,9 @@ Use `Get-Help BackupAndRestore -Full` for full details and examples. This is a q
 ```powershell
 Get-Help about_SqlBackupRestoreTools
 Get-Help BackupAndRestore -Full
+Get-Help Backup-DbalDatabase -Full
 Get-Help Get-DBALibraryConfig -Full
+Get-Help Restore-DbalDatabase -Full
 Get-Help Set-DBALibraryConfig -Full
 ```
 

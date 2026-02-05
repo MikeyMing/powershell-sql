@@ -7,6 +7,13 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Configurable default backup tuning values (`BlockSize`, `BufferCount`, `MaxTransferSize`) via `Set-DBALibraryConfig` (optionally persisted).
 
+## [2.0.6] - 2026-02-05
+
+### Added
+- Standalone cmdlets for running one half of the workflow:
+	- `Backup-DbalDatabase`
+	- `Restore-DbalDatabase`
+
 ## [2.0.4] - 2026-02-02
 
 ### Changed

@@ -25,7 +25,9 @@ if (Get-Command Initialize-SbrtConfigFromDisk -ErrorAction SilentlyContinue) {
 # Export the stable public surface area.
 Export-ModuleMember -Function @(
     'BackupAndRestore',
+    'Backup-DbalDatabase',
     'Clear-DBALibraryConfig',
     'Get-DBALibraryConfig',
+    'Restore-DbalDatabase',
     'Set-DBALibraryConfig'
 )

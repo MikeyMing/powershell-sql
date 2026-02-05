@@ -1,6 +1,6 @@
 @{
     RootModule        = 'SqlBackupRestoreTools.psm1'
-    ModuleVersion     = '2.0.5'
+    ModuleVersion     = '2.0.6'
     GUID              = '78575d6b-ce20-4124-92bc-3396f257eb29'
     Author            = 'Mike Fleming (@BelugaMike)'
     CompanyName       = ''
@@ -12,8 +12,10 @@
 
     FunctionsToExport = @(
         'BackupAndRestore',
+        'Backup-DbalDatabase',
         'Clear-DBALibraryConfig',
         'Get-DBALibraryConfig',
+        'Restore-DbalDatabase',
         'Set-DBALibraryConfig'
     )
     CmdletsToExport   = @()
@@ -25,7 +27,7 @@
             Tags         = @('SQLServer','DBA','Backup','Restore')
             ProjectUri   = 'https://github.com/MikeyMing/powershell-sql'
             LicenseUri   = 'https://github.com/MikeyMing/powershell-sql/blob/main/LICENSE'
-            ReleaseNotes = '2.0.5: Configurable defaults for BlockSize/BufferCount/MaxTransferSize. See CHANGELOG.md.'
+            ReleaseNotes = '2.0.6: Add standalone Backup-DbalDatabase and Restore-DbalDatabase cmdlets. See CHANGELOG.md.'
         }
     }
 }
