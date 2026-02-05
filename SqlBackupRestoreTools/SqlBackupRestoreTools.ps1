@@ -839,6 +839,133 @@ function BackupAndRestore {
     .PARAMETER DryRun
         Logs the intended operations without performing destructive actions.
 
+    .PARAMETER DontBackupTarget
+        When $true, skips taking a safety backup of the target database (when applicable).
+
+    .PARAMETER RetainOwnerName
+        When $true, attempts to preserve the target database owner name.
+
+    .PARAMETER RecoveryModel
+        Target database recovery model to apply after restore.
+        Use 'Retain' to keep the current setting.
+
+    .PARAMETER OverwriteTarget
+        Legacy parameter retained for backwards compatibility.
+        Currently not used by the implementation.
+
+    .PARAMETER CompatabilityLevel
+        Target database compatibility level to apply after restore.
+        Use 'SetLatest' to set to the instance maximum, or 'Retain' to keep the current setting.
+
+    .PARAMETER ShrinkLog
+        When $true, attempts to shrink the target database log file after restore.
+
+    .PARAMETER WaitforManualRestore
+        When $true, performs backups and then pauses for a manual restore step before continuing.
+
+    .PARAMETER MarkAsRetain
+        When $true, marks generated backup file names as retained (useful to avoid accidental cleanup).
+
+    .PARAMETER NoRecovery
+        When $true, performs the restore WITH NORECOVERY, leaving the target database in RESTORING state.
+
+    .PARAMETER RollForwardTransactionLogs
+        When $true, performs a log-shipping style workflow to roll forward transaction log backups.
+        Only supported for filesystem/UNC backup paths (not Azure URL backups).
+
+    .PARAMETER LogBackupIntervalSeconds
+        Interval (seconds) between transaction log backup cycles when using -RollForwardTransactionLogs.
+
+    .PARAMETER MaxLogBackupCycles
+        Maximum number of log backup cycles before proceeding to a final log backup with recovery.
+        Use 0 for unlimited cycles.
+
+    .PARAMETER CopyUserRoles
+        When $true, attempts to copy user role memberships to the target database.
+
+    .PARAMETER CreateLoginsIfTheyDontExist
+        When $true, attempts to create missing SQL logins required by restored users.
+
+    .PARAMETER PreserveTargetSecurity
+        When specified, captures target security before restore and reapplies it after restore.
+        Only applicable when restoring over an existing target database.
+
+    .PARAMETER IntermediateInstance
+        Optional intermediate SQL instance for a multi-hop/hand-off workflow.
+        When specified, backups complete and you are prompted to restore on the intermediate before continuing.
+
+    .PARAMETER Differential
+        When $true, uses differential backup/restore logic.
+        The target database must be in RESTORING state.
+
+    .PARAMETER BatchMode
+        When specified, minimizes interactive prompts and assumes defaults where possible.
+
+    .PARAMETER EmailAddress
+        Email address to notify on completion or when manual action is required.
+        If omitted, the command attempts to auto-discover from Active Directory.
+
+    .PARAMETER FromAddress
+        From address used when sending notification emails.
+
+    .PARAMETER CopyOnly
+        When $true (default), uses COPY_ONLY for backups (where supported) to avoid disrupting backup chains.
+        Automatically forced to $false for some workflows (e.g. -NoRecovery / -RollForwardTransactionLogs).
+
+    .PARAMETER ScriptToRunOnTarget
+        Optional path to a .sql script file to execute against the target database after restore.
+
+    .PARAMETER ChangeCollation
+        When specified, changes the target database collation after restore.
+        Requires -Collation.
+
+    .PARAMETER Collation
+        Collation name to apply when using -ChangeCollation.
+
+    .PARAMETER DontCheckSpace
+        When $true, skips disk space validation checks.
+
+    .PARAMETER NoDBCC
+        When $true, skips DBCC CHECKDB after restore.
+
+    .PARAMETER UpdateStats
+        When $true, updates statistics on the target database after restore.
+
+    .PARAMETER NumberOfBackupsToRetain
+        Maximum number of backup files to retain in the backup folder (older backups are deleted).
+
+    .PARAMETER RetainByAgeDays
+        When specified, deletes backup files older than this many days.
+
+    .PARAMETER BlockSize
+        Backup/restore tuning: SQL Server BACKUP option BLOCKSIZE. Default is 65536.
+        If omitted, the module can apply a configured default (see Set-DBALibraryConfig).
+
+    .PARAMETER BufferCount
+        Backup/restore tuning: SQL Server BACKUP option BUFFERCOUNT. Default is 50.
+        If omitted, the module can apply a configured default (see Set-DBALibraryConfig).
+
+    .PARAMETER MaxTransferSize
+        Backup/restore tuning: SQL Server BACKUP option MAXTRANSFERSIZE. Default is 2097152.
+        If omitted, the module can apply a configured default (see Set-DBALibraryConfig).
+
+    .PARAMETER DeleteOrphans
+        When $true, attempts to remove orphaned database users after restore.
+
+    .PARAMETER TakeTargetOfflineMode
+        Controls how the target database is taken offline (when -TakeTargetOffline is used).
+        Valid values: RollbackImmediate, NoWait, Wait.
+
+    .PARAMETER AbortIfActiveSessions
+        When $true and taking the target offline, aborts if active sessions are detected.
+
+    .PARAMETER ResumeFromLatestBackup
+        When specified, attempts to resume by using the latest existing backup file in the backup folder.
+        Supported for filesystem/UNC backups only (not Azure URL backups).
+
+    .PARAMETER VerboseDiagnostics
+        When specified, enables additional diagnostic output useful for troubleshooting.
+
     .EXAMPLE
         BackupAndRestore -SourceInstance 'SERVER\INSTANCE' -SourceDatabase 'MyDb' \
           -TargetInstance 'SERVER\INSTANCE' -TargetDatabase 'MyDb_Copy' \

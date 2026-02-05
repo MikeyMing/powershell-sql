@@ -58,6 +58,22 @@ Get-Command -Module SqlBackupRestoreTools
 
 - `BackupAndRestore`
 
+## BackupAndRestore parameters (summary)
+
+Use `Get-Help BackupAndRestore -Full` for full details and examples. This is a quick discovery index.
+
+- Core: `-SourceInstance`, `-SourceDatabase`, `-TargetInstance`, `-TargetDatabase`
+- Backup location (pick one): `-BackupPath`, `-AzureStorageBackupLocation`
+- Safety/flow: `-CreateDatabase`, `-TakeTargetOffline`, `-TakeTargetOfflineMode`, `-AbortIfActiveSessions`, `-VerifyBackup`, `-PreflightOnly`, `-DryRun`
+- Automation/diagnostics: `-BatchMode`, `-VerboseDiagnostics`, `-ResumeFromLatestBackup`
+- Advanced restore workflows: `-Differential`, `-NoRecovery`, `-WaitforManualRestore`, `-IntermediateInstance`, `-RollForwardTransactionLogs`, `-LogBackupIntervalSeconds`, `-MaxLogBackupCycles`
+- Target DB post-restore actions: `-RecoveryModel`, `-CompatabilityLevel`, `-ChangeCollation`, `-Collation`, `-ShrinkLog`, `-UpdateStats`, `-NoDBCC`, `-DeleteOrphans`, `-ScriptToRunOnTarget`
+- Security/users: `-CopyUserRoles`, `-CreateLoginsIfTheyDontExist`, `-PreserveTargetSecurity`, `-RetainOwnerName`
+- Backup retention/cleanup: `-NumberOfBackupsToRetain`, `-RetainByAgeDays`, `-MarkAsRetain`
+- Performance tuning: `-BlockSize`, `-BufferCount`, `-MaxTransferSize`, `-CopyOnly`
+- Logging/notifications: `-EnableDbLogging`, `-EmailAddress`, `-FromAddress`
+- Misc/legacy: `-DontCheckSpace`, `-DontBackupTarget`, `-OverwriteTarget` (legacy/no-op)
+
 ## Getting help
 
 ```powershell
