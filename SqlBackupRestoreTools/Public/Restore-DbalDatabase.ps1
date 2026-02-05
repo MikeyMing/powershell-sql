@@ -130,13 +130,21 @@ function Restore-DbalDatabase {
     $script:ExecutionID = [guid]::NewGuid().Guid
     $script:DBALibraryVerboseDiagnostics = $VerboseDiagnostics.IsPresent
 
+    $topProgressId = 0
+    try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Initializing...' -PercentComplete 0 } catch {}
+
     if ($ChangeCollation.IsPresent -and [string]::IsNullOrWhiteSpace($Collation)) {
         throw "-ChangeCollation requires -Collation."
     }
 
     if ($AbortIfActiveSessions -and $TakeInstanceOffline -and -not $CreateDatabase -and -not $Differential) {
-        if (Test-DbalDatabaseHasActiveUserSessions -Instance $Instance -Database $Database) {
-            throw "Active user sessions detected on [$Database] on [$Instance]; aborting due to -AbortIfActiveSessions."
+        try {
+            if (Test-DbalDatabaseHasActiveUserSessions -Instance $Instance -Database $Database) {
+                throw "Active user sessions detected on [$Database] on [$Instance]; aborting due to -AbortIfActiveSessions."
+            }
+        } catch {
+            $msg = "Failed checking active sessions on [$Database] on [$Instance]. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
 
@@ -152,13 +160,23 @@ function Restore-DbalDatabase {
 
     $originalTargetRoles = $null
     if ($CopyUserRoles -and -not $CreateDatabase -and -not $Differential) {
-        $originalTargetRoles = Get-SQLUserRoles -InstanceName $Instance -DatabaseName $Database
+        try {
+            $originalTargetRoles = Get-SQLUserRoles -InstanceName $Instance -DatabaseName $Database
+        } catch {
+            $msg = "Failed capturing existing role memberships on [$Database] on [$Instance]. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
     }
 
     $targetSecuritySnapshot = $null
     if ($PreserveTargetSecurity.IsPresent -and -not $CreateDatabase -and -not $Differential) {
         Log -Message "PreserveTargetSecurity specified: capturing target database security snapshot" -Level Info -WriteToHost
-        $targetSecuritySnapshot = Get-DbalDatabaseSecuritySnapshot -Instance $Instance -Database $Database
+        try {
+            $targetSecuritySnapshot = Get-DbalDatabaseSecuritySnapshot -Instance $Instance -Database $Database
+        } catch {
+            $msg = "Failed capturing security snapshot on [$Database] on [$Instance]. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
         if ($targetSecuritySnapshot -and $targetSecuritySnapshot.Warnings -and $targetSecuritySnapshot.Warnings.Count -gt 0) {
             foreach ($w in $targetSecuritySnapshot.Warnings) {
                 Log -Message $w -Level Warning -WriteToHost -ForegroundColour Yellow
@@ -167,7 +185,12 @@ function Restore-DbalDatabase {
     }
 
     if ($VerifyBackup.IsPresent) {
-        $null = Invoke-DbalVerifyBackup -Instance $Instance -BackupPath $BackupPath -CredentialName $CredentialName -DryRun:$DryRun
+        try {
+            $null = Invoke-DbalVerifyBackup -Instance $Instance -BackupPath $BackupPath -CredentialName $CredentialName -DryRun:$DryRun
+        } catch {
+            $msg = "Backup verification failed (RESTORE VERIFYONLY) on [$Instance] for path $(Get-DisplayPath $BackupPath). $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
     }
 
     $restoreParams = @{
@@ -184,9 +207,16 @@ function Restore-DbalDatabase {
         CredentialName          = $CredentialName
     }
 
-    $restoreJob = Restore-SQLDatabase @restoreParams -DryRun:$DryRun
+    try {
+        try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Submitting restore...' -PercentComplete 3 } catch {}
+        $restoreJob = Restore-SQLDatabase @restoreParams -DryRun:$DryRun
+    } catch {
+        $msg = "Failed starting restore for [$Database] on [$Instance]. $($_.Exception.Message)"
+        throw (New-Object System.Exception($msg, $_.Exception))
+    }
 
     if ($DryRun.IsPresent) {
+        try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Completed } catch {}
         return [pscustomobject]@{
             Instance   = $Instance
             Database   = $Database
@@ -195,7 +225,15 @@ function Restore-DbalDatabase {
         }
     }
 
-    Progress2 -JobDetailsCollection @($restoreJob)
+    try {
+        try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Running...' -PercentComplete 5 } catch {}
+        Progress2 -JobDetailsCollection @($restoreJob)
+    } catch {
+        $msg = "Restore failed for [$Database] on [$Instance]. $($_.Exception.Message)"
+        throw (New-Object System.Exception($msg, $_.Exception))
+    } finally {
+        try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Completed } catch {}
+    }
 
     if (-not $NoRecovery) {
         if ($ChangeCollation) {

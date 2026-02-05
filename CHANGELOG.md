@@ -14,6 +14,12 @@ All notable changes to this project will be documented in this file.
 	- `Backup-DbalDatabase`
 	- `Restore-DbalDatabase`
 
+## [2.0.7] - 2026-02-05
+
+### Changed
+- Improved progress visibility for backup/restore operations in VS Code terminals.
+- Friendlier error messages when an instance is unreachable (includes operation context and preserves original exception details).
+
 ## [2.0.4] - 2026-02-02
 
 ### Changed

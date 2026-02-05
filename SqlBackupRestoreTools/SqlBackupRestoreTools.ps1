@@ -2678,12 +2678,24 @@ function Progress2 {
     #>
     param ($JobDetailsCollection)
 
+    $oldProgressPreference = $ProgressPreference
+    $ProgressPreference = 'Continue'
+
     try {
         # Hard timeout to avoid indefinite hangs (restore can be long; keep generous)
         $timeoutSeconds = 60 * 60 * 4
         $startTime = Get-Date
         Write-DebugMessage "[Progress2] Monitoring jobs: $($JobDetailsCollection | ForEach-Object { $_.Job.Name })"
         $timedOut = $false
+
+        foreach ($Job in $JobDetailsCollection) {
+            try {
+                Write-Progress -Id $Job.Id -Activity "$($Job.Job.Name) on $($Job.Database) on $($Job.Instance)" -PercentComplete 0 -Status 'Starting...'
+            } catch {
+                # ignore
+            }
+        }
+
         while ($JobDetailsCollection | Where-Object { $_.Job.State -eq "Running" }) {
             $I++
             foreach ($Job in $JobDetailsCollection) {
@@ -2698,7 +2710,7 @@ function Progress2 {
                     $displayPath = Get-DisplayPath $Job.Path
                     Write-Progress -Id $Job.Id -PercentComplete 100 -Activity "$($Job.Job.Name) on $($Job.Database) on $($Job.Instance) to $displayPath" -Status "Complete"
                 } elseif ($State -eq "Failed") {
-                    $Er = $Job.ChildJobs[0].JobStateInfo.Reason
+                    $Er = $Job.Job.ChildJobs[0].JobStateInfo.Reason
                     $JobOutput = Receive-Job -Job $Job.Job -Keep -ErrorAction SilentlyContinue
                     Write-DebugMessage "[Progress2] Job $($Job.Job.Name) failed: $Er"
                     Write-Host "[Progress2] Job $($Job.Job.Name) failed: $Er" -ForegroundColor Red
@@ -2737,6 +2749,11 @@ function Progress2 {
                     }
                     if ($I % 4 -eq 0) {
                         Log "Percent Complete = $PercentComplete, ETA = $ETA (in $ETAMin minutes)"
+                    }
+                    # VS Code's terminal doesn't always render Write-Progress reliably.
+                    # Emit a lightweight host message occasionally so users see movement.
+                    if ($I % 10 -eq 0) {
+                        Write-Host "[Progress2] $($Job.Job.Name) on $($Job.Database) on $($Job.Instance): $PercentComplete% (ETA: $ETA)" -ForegroundColor Cyan
                     }
                     $PercentCompleteInt = 0
                     try {
@@ -2813,6 +2830,9 @@ function Progress2 {
         }
         Log -Message "Error $Reason" -Level Error
         throw $Reason
+    }
+    finally {
+        $ProgressPreference = $oldProgressPreference
     }
     Write-DebugMessage "[Progress2] Exit"
 }

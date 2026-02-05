@@ -74,6 +74,9 @@ function Backup-DbalDatabase {
     $script:ExecutionID = [guid]::NewGuid().Guid
     $script:DBALibraryVerboseDiagnostics = $VerboseDiagnostics.IsPresent
 
+    $topProgressId = 0
+    try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Status 'Initializing...' -PercentComplete 0 } catch {}
+
     # Apply configured defaults when neither backup location is explicitly provided.
     if ([string]::IsNullOrWhiteSpace($BackupPath) -and [string]::IsNullOrWhiteSpace($AzureStorageBackupLocation)) {
         if (-not [string]::IsNullOrWhiteSpace($script:DefaultAzureStorageBackupLocation)) {
@@ -98,7 +101,15 @@ function Backup-DbalDatabase {
 
     # Compression is instance-dependent (requires SQL connectivity). For -DryRun, avoid
     # any instance calls and default to no compression so SQL preview is always generated.
-    $compress = if ($DryRun.IsPresent) { $false } else { Get-SQLInstanceCompression -InstanceName $Instance }
+    $compress = $false
+    if (-not $DryRun.IsPresent) {
+        try {
+            $compress = Get-SQLInstanceCompression -InstanceName $Instance
+        } catch {
+            $msg = "Failed to connect to SQL instance [$Instance] while checking compression support. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
+    }
 
     $credentialNameForWithCredential = $null
     $computedBackupPath = $null
@@ -124,8 +135,13 @@ function Backup-DbalDatabase {
         $shouldCreateFolders = -not $DryRun.IsPresent
         $computedBackupPath = Get-BackupLocation -InstanceName $Instance -DatabaseName $Database -CreateIfNotExist $shouldCreateFolders -MarkAsRetain $MarkAsRetain -Differential $Differential -BackupLocation $BackupPath
         if (-not $DryRun.IsPresent) {
-            if (-not (Test-PathOnSQLServer -Instance $Instance -Path $computedBackupPath -TestDirectoryOnly $true)) {
-                throw "Backup location ($(Get-DisplayPath $computedBackupPath)) not accessible from [$Instance]."
+            try {
+                if (-not (Test-PathOnSQLServer -Instance $Instance -Path $computedBackupPath -TestDirectoryOnly $true)) {
+                    throw "Backup location ($(Get-DisplayPath $computedBackupPath)) not accessible from [$Instance]."
+                }
+            } catch {
+                $msg = "Failed validating backup path accessibility from [$Instance]. $($_.Exception.Message)"
+                throw (New-Object System.Exception($msg, $_.Exception))
             }
         }
     }
@@ -151,6 +167,7 @@ function Backup-DbalDatabase {
     $jobDetails = Backup-Database @backupParams -DryRun:$DryRun
 
     if ($DryRun.IsPresent) {
+        try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Completed } catch {}
         return [pscustomobject]@{
             Instance   = $Instance
             Database   = $Database
@@ -159,7 +176,15 @@ function Backup-DbalDatabase {
         }
     }
 
-    Progress2 -JobDetailsCollection @($jobDetails)
+    try {
+        try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Status 'Running...' -PercentComplete 5 } catch {}
+        Progress2 -JobDetailsCollection @($jobDetails)
+    } catch {
+        $msg = "Backup failed for [$Database] on [$Instance]. $($_.Exception.Message)"
+        throw (New-Object System.Exception($msg, $_.Exception))
+    } finally {
+        try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Completed } catch {}
+    }
 
     return [pscustomobject]@{
         Instance   = $Instance
