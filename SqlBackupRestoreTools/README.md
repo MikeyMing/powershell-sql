@@ -82,6 +82,12 @@ Set a default backup location (used when you omit both `-BackupPath` and `-Azure
 Set-DBALibraryConfig -DefaultBackupPath '\\fileserver\sqlbackups'
 ```
 
+Set default BACKUP/RESTORE tuning values (used when you omit these parameters on `BackupAndRestore`):
+
+```powershell
+Set-DBALibraryConfig -DefaultBlockSize 65536 -DefaultBufferCount 50 -DefaultMaxTransferSize 2097152
+```
+
 Persist config per-user (so you don't have to set it every session):
 
 ```powershell

@@ -761,6 +761,9 @@ $smtpserver = 'smtp'
 $SMTPEnabled = $false
 $script:DefaultBackupPath = $null
 $script:DefaultAzureStorageBackupLocation = $null
+$script:DefaultBlockSize = $null
+$script:DefaultBufferCount = $null
+$script:DefaultMaxTransferSize = $null
 $ProgressInterval = 2
 $script:ExecutionID = [guid]::NewGuid().Guid
 
@@ -919,9 +922,9 @@ function BackupAndRestore {
         [bool]$UpdateStats = $false,
         [int]$NumberOfBackupsToRetain,
         [int]$RetainByAgeDays,
-        [string]$BlockSize = '65536',
-        [string]$BufferCount = '50',
-        [string]$MaxTransferSize = '2097152',
+        [int]$BlockSize = 65536,
+        [int]$BufferCount = 50,
+        [int]$MaxTransferSize = 2097152,
         [bool]$DeleteOrphans = $false,
         [ValidateSet('RollbackImmediate', 'NoWait', 'Wait')][string]$TakeTargetOfflineMode = 'RollbackImmediate',
         [bool]$AbortIfActiveSessions = $false,
@@ -996,6 +999,31 @@ function BackupAndRestore {
             } elseif (-not [string]::IsNullOrWhiteSpace($script:DefaultBackupPath)) {
                 $BackupPath = $script:DefaultBackupPath
             }
+        }
+
+        # Apply configurable tuning defaults when not explicitly provided.
+        $effectiveBlockSize = if ($PSBoundParameters.ContainsKey('BlockSize')) {
+            $BlockSize
+        } elseif ($null -ne $script:DefaultBlockSize) {
+            [int]$script:DefaultBlockSize
+        } else {
+            $BlockSize
+        }
+
+        $effectiveBufferCount = if ($PSBoundParameters.ContainsKey('BufferCount')) {
+            $BufferCount
+        } elseif ($null -ne $script:DefaultBufferCount) {
+            [int]$script:DefaultBufferCount
+        } else {
+            $BufferCount
+        }
+
+        $effectiveMaxTransferSize = if ($PSBoundParameters.ContainsKey('MaxTransferSize')) {
+            $MaxTransferSize
+        } elseif ($null -ne $script:DefaultMaxTransferSize) {
+            [int]$script:DefaultMaxTransferSize
+        } else {
+            $MaxTransferSize
         }
 
         if (-not [string]::IsNullOrWhiteSpace($AzureStorageBackupLocation) -and -not [string]::IsNullOrWhiteSpace($BackupPath)) {
@@ -1321,7 +1349,7 @@ function BackupAndRestore {
         if (-not $ResumeSourceBackup) {
             Write-DebugMessage "[BackupAndRestore] Creating backup job for $SourceDatabase on $SourceInstance"
             $progressMatch = if ($SourceBackupLocation -match '^https://') { ($SourceBackupLocation.Split('?', 2)[0] | Split-Path -Leaf) } else { $SourceBackupLocation }
-            $NewJob = Backup-Database -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $SourceBackupLocation -ProgressID 1 -Compress $Compress -JobName "SourceBackup" -Differential $Differential -CopyOnly $CopyOnly -BlockSize $BlockSize -BufferCount $BufferCount -MaxTransferSize $MaxTransferSize -ProgressMatch $progressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
+            $NewJob = Backup-Database -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $SourceBackupLocation -ProgressID 1 -Compress $Compress -JobName "SourceBackup" -Differential $Differential -CopyOnly $CopyOnly -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $progressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
             Write-DebugMessage "[BackupAndRestore] Backup job created: $($NewJob | Out-String)"
             if (-not $DryRun) { $Jobs += $NewJob }
         }
@@ -1345,7 +1373,7 @@ function BackupAndRestore {
             Read-Host -Prompt "Press any key when manual restore on intermediate is complete"
             Log "Input received. Continuing"
             Check-DatabaseAccess -Instance $IntermediateInstance -Database $TargetDatabase
-            Backup-Database -InstanceName $IntermediateInstance -DatabaseName $TargetDatabase -BackupPath $IntermediateBackupLocation -Compress $Compress -ProgressID 7 -JobName "BackupIntermediate" -CopyOnly $true -BlockSize $BlockSize -BufferCount $BufferCount -MaxTransferSize $MaxTransferSize -CredentialName $azureCredentialName
+            Backup-Database -InstanceName $IntermediateInstance -DatabaseName $TargetDatabase -BackupPath $IntermediateBackupLocation -Compress $Compress -ProgressID 7 -JobName "BackupIntermediate" -CopyOnly $true -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -CredentialName $azureCredentialName
             Progress -Job "BackupIntermediate" -Id 7 -Path $IntermediateBackupLocation -Instance $IntermediateInstance -Database $TargetDatabase
         }
 
@@ -1353,7 +1381,7 @@ function BackupAndRestore {
             Write-DebugMessage "[BackupAndRestore] TargetBackupLocation=$TargetBackupLocation"
             Log "TargetBackupLocation = $TargetBackupLocation"
             $targetProgressMatch = if ($TargetBackupLocation -match '^https://') { ($TargetBackupLocation.Split('?', 2)[0] | Split-Path -Leaf) } else { $TargetBackupLocation }
-            $TargetJob = Backup-Database -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $TargetBackupLocation -ProgressID 2 -Compress $Compress -JobName "TargetBackup" -BlockSize $BlockSize -BufferCount $BufferCount -MaxTransferSize $MaxTransferSize -ProgressMatch $targetProgressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
+            $TargetJob = Backup-Database -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $TargetBackupLocation -ProgressID 2 -Compress $Compress -JobName "TargetBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $targetProgressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
             Write-DebugMessage "[BackupAndRestore] Target backup job created: $($TargetJob | Out-String)"
             if (-not $DryRun) { $Jobs += $TargetJob }
         }
@@ -1460,7 +1488,7 @@ function BackupAndRestore {
                 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
                 $logBackupPath = Join-Path $logBackupDirectory "$SourceDatabase`_adhoc_LOG_$timestamp.trn"
 
-                $logBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $logBackupPath -ProgressID 101 -JobName "SourceLogBackup" -BlockSize $BlockSize -BufferCount $BufferCount -MaxTransferSize $MaxTransferSize
+                $logBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $logBackupPath -ProgressID 101 -JobName "SourceLogBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize
                 Progress2 -JobDetailsCollection @($logBackupJob)
 
                 $restoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $logBackupPath -NoRecovery $true -JobName "RestoreTargetLog"
@@ -1482,7 +1510,7 @@ function BackupAndRestore {
 
             $finalTimestamp = Get-Date -Format 'yyyyMMddHHmmss'
             $finalLogBackupPath = Join-Path $logBackupDirectory "$SourceDatabase`_adhoc_LOGFINAL_$finalTimestamp.trn"
-            $finalLogBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $finalLogBackupPath -ProgressID 102 -JobName "SourceLogBackupFinal" -BlockSize $BlockSize -BufferCount $BufferCount -MaxTransferSize $MaxTransferSize
+            $finalLogBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $finalLogBackupPath -ProgressID 102 -JobName "SourceLogBackupFinal" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize
             Progress2 -JobDetailsCollection @($finalLogBackupJob)
 
             $finalRestoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $finalLogBackupPath -NoRecovery $false -JobName "RestoreTargetLogFinal"

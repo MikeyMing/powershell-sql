@@ -7,7 +7,7 @@ function Set-DBALibraryConfig {
         Sets session-scoped configuration values used by BackupAndRestore.
 
         This module retains the legacy DBALibrary config cmdlet names for backward compatibility.
-        Settings are not persisted across PowerShell sessions.
+        Settings are session-scoped unless you specify -Persist.
 
     .PARAMETER DBAInstance
         SQL Server instance hosting the logging database used when -EnableDbLogging is specified.
@@ -26,6 +26,15 @@ function Set-DBALibraryConfig {
 
     .PARAMETER DefaultAzureStorageBackupLocation
         Default Azure Blob container URL used when BackupAndRestore is called without -BackupPath or -AzureStorageBackupLocation.
+
+    .PARAMETER DefaultBlockSize
+        Default BACKUP/RESTORE tuning value for BLOCKSIZE (in bytes). Used when BackupAndRestore is called without -BlockSize.
+
+    .PARAMETER DefaultBufferCount
+        Default BACKUP/RESTORE tuning value for BUFFERCOUNT. Used when BackupAndRestore is called without -BufferCount.
+
+    .PARAMETER DefaultMaxTransferSize
+        Default BACKUP/RESTORE tuning value for MAXTRANSFERSIZE (in bytes). Used when BackupAndRestore is called without -MaxTransferSize.
 
     .PARAMETER Persist
         Persists the updated configuration to a per-user config file (JSON).
@@ -61,6 +70,9 @@ function Set-DBALibraryConfig {
         [Nullable[bool]]$SMTPEnabled,
         [string]$DefaultBackupPath,
         [string]$DefaultAzureStorageBackupLocation,
+        [int]$DefaultBlockSize,
+        [int]$DefaultBufferCount,
+        [int]$DefaultMaxTransferSize,
         [switch]$Persist
     )
 
@@ -77,6 +89,16 @@ function Set-DBALibraryConfig {
             Set-Variable -Scope Script -Name DefaultAzureStorageBackupLocation -Value $DefaultAzureStorageBackupLocation
         }
 
+        if ($PSBoundParameters.ContainsKey('DefaultBlockSize')) {
+            Set-Variable -Scope Script -Name DefaultBlockSize -Value $DefaultBlockSize
+        }
+        if ($PSBoundParameters.ContainsKey('DefaultBufferCount')) {
+            Set-Variable -Scope Script -Name DefaultBufferCount -Value $DefaultBufferCount
+        }
+        if ($PSBoundParameters.ContainsKey('DefaultMaxTransferSize')) {
+            Set-Variable -Scope Script -Name DefaultMaxTransferSize -Value $DefaultMaxTransferSize
+        }
+
         if ($Persist.IsPresent) {
             $configToPersist = [pscustomobject]@{
                 DBAInstance = (Get-Variable -Name DBAInstance -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
@@ -85,6 +107,9 @@ function Set-DBALibraryConfig {
                 SMTPEnabled = [bool](Get-Variable -Name SMTPEnabled -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
                 DefaultBackupPath = (Get-Variable -Name DefaultBackupPath -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
                 DefaultAzureStorageBackupLocation = (Get-Variable -Name DefaultAzureStorageBackupLocation -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+                DefaultBlockSize = (Get-Variable -Name DefaultBlockSize -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+                DefaultBufferCount = (Get-Variable -Name DefaultBufferCount -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+                DefaultMaxTransferSize = (Get-Variable -Name DefaultMaxTransferSize -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
             }
 
             $path = Save-SbrtPersistedConfig -Config $configToPersist

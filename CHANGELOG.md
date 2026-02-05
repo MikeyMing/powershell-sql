@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.5] - 2026-02-05
+
+### Added
+- Configurable default backup tuning values (`BlockSize`, `BufferCount`, `MaxTransferSize`) via `Set-DBALibraryConfig` (optionally persisted).
+
 ## [2.0.4] - 2026-02-02
 
 ### Changed

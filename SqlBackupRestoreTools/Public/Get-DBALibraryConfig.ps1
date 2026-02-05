@@ -52,6 +52,9 @@ function Get-DBALibraryConfig {
             SMTPEnabled  = [bool]$p.SMTPEnabled
             BackupPathDefault = $p.DefaultBackupPath
             AzureStorageBackupLocationDefault = $p.DefaultAzureStorageBackupLocation
+            BlockSizeDefault = $p.DefaultBlockSize
+            BufferCountDefault = $p.DefaultBufferCount
+            MaxTransferSizeDefault = $p.DefaultMaxTransferSize
         }
     }
 
@@ -64,5 +67,8 @@ function Get-DBALibraryConfig {
         SMTPEnabled  = [bool](Get-Variable -Name SMTPEnabled -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
         BackupPathDefault = (Get-Variable -Name DefaultBackupPath -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
         AzureStorageBackupLocationDefault = (Get-Variable -Name DefaultAzureStorageBackupLocation -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        BlockSizeDefault = (Get-Variable -Name DefaultBlockSize -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        BufferCountDefault = (Get-Variable -Name DefaultBufferCount -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
+        MaxTransferSizeDefault = (Get-Variable -Name DefaultMaxTransferSize -Scope Script -ValueOnly -ErrorAction SilentlyContinue)
     }
 }

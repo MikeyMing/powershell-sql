@@ -54,6 +54,9 @@ function Clear-DBALibraryConfig {
             Set-Variable -Scope Script -Name SMTPEnabled -Value $false
             Set-Variable -Scope Script -Name DefaultBackupPath -Value $null
             Set-Variable -Scope Script -Name DefaultAzureStorageBackupLocation -Value $null
+            Set-Variable -Scope Script -Name DefaultBlockSize -Value $null
+            Set-Variable -Scope Script -Name DefaultBufferCount -Value $null
+            Set-Variable -Scope Script -Name DefaultMaxTransferSize -Value $null
         }
     }
 }

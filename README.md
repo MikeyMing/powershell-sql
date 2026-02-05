@@ -54,6 +54,12 @@ Set-DBALibraryConfig -DBAInstance 'SERVER\INSTANCE' -DBADatabase 'DBA' -SMTPEnab
 Get-DBALibraryConfig
 ```
 
+Optional: set default BACKUP/RESTORE tuning values (used when you omit these parameters on `BackupAndRestore`):
+
+```powershell
+Set-DBALibraryConfig -DefaultBlockSize 65536 -DefaultBufferCount 50 -DefaultMaxTransferSize 2097152
+```
+
 ## Prerequisites
 
 - **SQL operations**: Requires the `SqlServer` PowerShell module (`Invoke-Sqlcmd`).

@@ -1,6 +1,6 @@
 @{
     RootModule        = 'SqlBackupRestoreTools.psm1'
-    ModuleVersion     = '2.0.4'
+    ModuleVersion     = '2.0.5'
     GUID              = '78575d6b-ce20-4124-92bc-3396f257eb29'
     Author            = 'Mike Fleming (@BelugaMike)'
     CompanyName       = ''
@@ -25,7 +25,7 @@
             Tags         = @('SQLServer','DBA','Backup','Restore')
             ProjectUri   = 'https://github.com/MikeyMing/powershell-sql'
             LicenseUri   = 'https://github.com/MikeyMing/powershell-sql/blob/main/LICENSE'
-            ReleaseNotes = '2.0.4: README install/update/uninstall instructions clarified. See CHANGELOG.md.'
+            ReleaseNotes = '2.0.5: Configurable defaults for BlockSize/BufferCount/MaxTransferSize. See CHANGELOG.md.'
         }
     }
 }

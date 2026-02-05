@@ -86,4 +86,8 @@ function Initialize-SbrtConfigFromDisk {
 
     if ($null -ne $persisted.DefaultBackupPath) { Set-Variable -Scope Script -Name DefaultBackupPath -Value ([string]$persisted.DefaultBackupPath) }
     if ($null -ne $persisted.DefaultAzureStorageBackupLocation) { Set-Variable -Scope Script -Name DefaultAzureStorageBackupLocation -Value ([string]$persisted.DefaultAzureStorageBackupLocation) }
+
+    if ($null -ne $persisted.DefaultBlockSize) { Set-Variable -Scope Script -Name DefaultBlockSize -Value ([int]$persisted.DefaultBlockSize) }
+    if ($null -ne $persisted.DefaultBufferCount) { Set-Variable -Scope Script -Name DefaultBufferCount -Value ([int]$persisted.DefaultBufferCount) }
+    if ($null -ne $persisted.DefaultMaxTransferSize) { Set-Variable -Scope Script -Name DefaultMaxTransferSize -Value ([int]$persisted.DefaultMaxTransferSize) }
 }
