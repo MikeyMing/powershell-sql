@@ -83,7 +83,9 @@ function Backup-DbalDatabase {
                 throw "Database [$Database] does not exist on [$Instance], or you do not have permission to access it."
             }
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Preflight failed for backup of [$Database] on [$Instance]. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -117,7 +119,9 @@ function Backup-DbalDatabase {
         try {
             $compress = Get-SQLInstanceCompression -InstanceName $Instance
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Failed to connect to SQL instance [$Instance] while checking compression support. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -151,7 +155,9 @@ function Backup-DbalDatabase {
                     throw "Backup location ($(Get-DisplayPath $computedBackupPath)) not accessible from [$Instance]."
                 }
             } catch {
+                $hint = Get-DbalSqlErrorHint -ErrorOrException $_
                 $msg = "Failed validating backup path accessibility from [$Instance]. $($_.Exception.Message)"
+                if ($hint) { $msg += " $hint" }
                 throw (New-Object System.Exception($msg, $_.Exception))
             }
         }
@@ -191,7 +197,9 @@ function Backup-DbalDatabase {
         try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Status 'Running...' -PercentComplete 5 } catch {}
         Progress2 -JobDetailsCollection @($jobDetails)
     } catch {
+        $hint = Get-DbalSqlErrorHint -ErrorOrException $_
         $msg = "Backup failed for [$Database] on [$Instance]. $($_.Exception.Message)"
+        if ($hint) { $msg += " $hint" }
         throw (New-Object System.Exception($msg, $_.Exception))
     } finally {
         try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Completed } catch {}

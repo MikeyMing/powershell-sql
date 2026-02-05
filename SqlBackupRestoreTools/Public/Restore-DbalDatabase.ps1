@@ -146,7 +146,9 @@ function Restore-DbalDatabase {
                 throw "Target database [$Database] does not exist on [$Instance]. Use -CreateDatabase:$true to create a new database."
             }
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Preflight failed for restore of [$Database] on [$Instance]. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -161,7 +163,9 @@ function Restore-DbalDatabase {
                 throw "Active user sessions detected on [$Database] on [$Instance]; aborting due to -AbortIfActiveSessions."
             }
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Failed checking active sessions on [$Database] on [$Instance]. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -181,7 +185,9 @@ function Restore-DbalDatabase {
         try {
             $originalTargetRoles = Get-SQLUserRoles -InstanceName $Instance -DatabaseName $Database
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Failed capturing existing role memberships on [$Database] on [$Instance]. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -192,7 +198,9 @@ function Restore-DbalDatabase {
         try {
             $targetSecuritySnapshot = Get-DbalDatabaseSecuritySnapshot -Instance $Instance -Database $Database
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Failed capturing security snapshot on [$Database] on [$Instance]. $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
         if ($targetSecuritySnapshot -and $targetSecuritySnapshot.Warnings -and $targetSecuritySnapshot.Warnings.Count -gt 0) {
@@ -206,7 +214,9 @@ function Restore-DbalDatabase {
         try {
             $null = Invoke-DbalVerifyBackup -Instance $Instance -BackupPath $BackupPath -CredentialName $CredentialName -DryRun:$DryRun
         } catch {
+            $hint = Get-DbalSqlErrorHint -ErrorOrException $_
             $msg = "Backup verification failed (RESTORE VERIFYONLY) on [$Instance] for path $(Get-DisplayPath $BackupPath). $($_.Exception.Message)"
+            if ($hint) { $msg += " $hint" }
             throw (New-Object System.Exception($msg, $_.Exception))
         }
     }
@@ -229,7 +239,9 @@ function Restore-DbalDatabase {
         try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Submitting restore...' -PercentComplete 3 } catch {}
         $restoreJob = Restore-SQLDatabase @restoreParams -DryRun:$DryRun
     } catch {
+        $hint = Get-DbalSqlErrorHint -ErrorOrException $_
         $msg = "Failed starting restore for [$Database] on [$Instance]. $($_.Exception.Message)"
+        if ($hint) { $msg += " $hint" }
         throw (New-Object System.Exception($msg, $_.Exception))
     }
 
@@ -247,7 +259,9 @@ function Restore-DbalDatabase {
         try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Running...' -PercentComplete 5 } catch {}
         Progress2 -JobDetailsCollection @($restoreJob)
     } catch {
+        $hint = Get-DbalSqlErrorHint -ErrorOrException $_
         $msg = "Restore failed for [$Database] on [$Instance]. $($_.Exception.Message)"
+        if ($hint) { $msg += " $hint" }
         throw (New-Object System.Exception($msg, $_.Exception))
     } finally {
         try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Completed } catch {}

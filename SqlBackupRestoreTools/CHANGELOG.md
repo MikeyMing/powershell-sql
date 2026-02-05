@@ -27,6 +27,12 @@ All notable changes to this project will be documented in this file.
 	- Backup: clearer error when the source database doesn’t exist or isn’t accessible.
 	- Restore: clearer error when the target database already exists but `-CreateDatabase` is `$true`, or when it doesn’t exist but `-CreateDatabase` is `$false`.
 
+## [2.0.9] - 2026-02-05
+
+### Changed
+- Added actionable error hints for common SQL failures (permissions, login failure, path access, and connectivity).
+- Preserved underlying job failure exceptions so callers see better root-cause details.
+
 ## [2.0.4] - 2026-02-02
 
 ### Changed

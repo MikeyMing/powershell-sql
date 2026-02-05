@@ -2823,13 +2823,18 @@ function Progress2 {
     catch {
         Write-DebugMessage "[Progress2] ERROR: $($_.Exception.Message)"
         $failedJob = Get-Job | Where-Object { $_.State -eq "Failed" } | Select-Object -First 1
-        $Reason = if ($failedJob -and $failedJob.ChildJobs -and $failedJob.ChildJobs.Count -gt 0) {
-            $failedJob.ChildJobs[0].JobStateInfo.Reason
-        } else {
-            $_.Exception.Message
+        $inner = $null
+        $Reason = $null
+        if ($failedJob -and $failedJob.ChildJobs -and $failedJob.ChildJobs.Count -gt 0) {
+            $Reason = $failedJob.ChildJobs[0].JobStateInfo.Reason
+            if ($Reason -is [System.Exception]) {
+                $inner = $Reason
+            }
         }
+        if (-not $Reason) { $Reason = $_.Exception.Message }
+        if (-not $inner) { $inner = $_.Exception }
         Log -Message "Error $Reason" -Level Error
-        throw $Reason
+        throw (New-Object System.Exception("[Progress2] $Reason", $inner))
     }
     finally {
         $ProgressPreference = $oldProgressPreference
@@ -2893,6 +2898,75 @@ function Check-DatabaseAccess {
             $false
         }
     }
+}
+
+function Get-DbalSqlErrorHint {
+    <#
+    .SYNOPSIS
+        Returns a short actionable hint for common SQL/IO error cases.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$ErrorOrException
+    )
+
+    $ex = $null
+    if ($ErrorOrException -is [System.Management.Automation.ErrorRecord]) {
+        $ex = $ErrorOrException.Exception
+    } elseif ($ErrorOrException -is [System.Exception]) {
+        $ex = $ErrorOrException
+    } else {
+        return $null
+    }
+
+    $sqlEx = $null
+    $cur = $ex
+    while ($cur) {
+        $t = $cur.GetType().FullName
+        if ($t -eq 'System.Data.SqlClient.SqlException' -or $t -eq 'Microsoft.Data.SqlClient.SqlException') {
+            $sqlEx = $cur
+            break
+        }
+        $cur = $cur.InnerException
+    }
+
+    $msg = ($ex.Message | Out-String).Trim()
+    $msgLower = $msg.ToLowerInvariant()
+
+    $sqlNumber = $null
+    try {
+        if ($sqlEx -and $sqlEx.Errors -and $sqlEx.Errors.Count -gt 0) {
+            $sqlNumber = [int]$sqlEx.Errors[0].Number
+        } elseif ($sqlEx -and $null -ne $sqlEx.Number) {
+            $sqlNumber = [int]$sqlEx.Number
+        }
+    } catch {
+        $sqlNumber = $null
+    }
+
+    switch ($sqlNumber) {
+        18456 { return "Hint: login failed (18456). Check instance name/auth mode and that your login has access." }
+        4060  { return "Hint: cannot open database (4060). Your login may not have access; verify permissions/user mapping." }
+        229   { return "Hint: permission denied (229). You likely need higher privileges (e.g., sysadmin/dbcreator) or specific BACKUP/RESTORE rights." }
+        15247 { return "Hint: insufficient permissions (15247). Some operations (like xp_fileexist/path checks) often require sysadmin." }
+    }
+
+    if ($msgLower -match 'error: 26' -or $msgLower -match 'error locating server/instance specified' -or $msgLower -match 'server was not found') {
+        return "Hint: instance not reachable. Verify instance name, TCP/IP, SQL Browser (named instances), and firewall rules."
+    }
+
+    if ($msgLower -match 'operating system error 5' -or $msgLower -match 'access is denied') {
+        return "Hint: access denied. The SQL Server service account must have NTFS/share permissions to the path (especially for UNC)."
+    }
+
+    if ($msgLower -match 'cannot find the path specified' -or $msgLower -match 'operating system error 3') {
+        return "Hint: path not found. Ensure the path exists and is accessible from the SQL Server machine."
+    }
+
+    if ($msgLower -match 'cannot open database' -and $msgLower -match 'requested by the login') {
+        return "Hint: your login cannot access that database. Verify database permissions/user mapping."
+    }
+
+    return $null
 }
 
 function SendEMail {
