@@ -20,6 +20,13 @@ All notable changes to this project will be documented in this file.
 - Improved progress visibility for backup/restore operations in VS Code terminals.
 - Friendlier error messages when an instance is unreachable (includes operation context and preserves original exception details).
 
+## [2.0.8] - 2026-02-05
+
+### Changed
+- Added preflight validation for common failure cases:
+	- Backup: clearer error when the source database doesn’t exist or isn’t accessible.
+	- Restore: clearer error when the target database already exists but `-CreateDatabase` is `$true`, or when it doesn’t exist but `-CreateDatabase` is `$false`.
+
 ## [2.0.4] - 2026-02-02
 
 ### Changed

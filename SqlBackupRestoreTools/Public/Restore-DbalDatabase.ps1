@@ -133,6 +133,24 @@ function Restore-DbalDatabase {
     $topProgressId = 0
     try { Write-Progress -Id $topProgressId -Activity "Restore $Database on $Instance" -Status 'Initializing...' -PercentComplete 0 } catch {}
 
+    if (-not $DryRun.IsPresent) {
+        try {
+            $existsSql = "SELECT CASE WHEN DB_ID('$Database') IS NULL THEN 0 ELSE 1 END AS DbExists"
+            $targetExists = (Invoke-Sqlcmd -ServerInstance $Instance -Database master -Query $existsSql -ErrorAction Stop).DbExists -eq 1
+
+            if ($CreateDatabase -and $targetExists -and -not $Differential) {
+                throw "Target database [$Database] already exists on [$Instance]. Use -CreateDatabase:$false to overwrite, or choose a different -Database name."
+            }
+
+            if (-not $CreateDatabase -and -not $targetExists -and -not $Differential) {
+                throw "Target database [$Database] does not exist on [$Instance]. Use -CreateDatabase:$true to create a new database."
+            }
+        } catch {
+            $msg = "Preflight failed for restore of [$Database] on [$Instance]. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
+    }
+
     if ($ChangeCollation.IsPresent -and [string]::IsNullOrWhiteSpace($Collation)) {
         throw "-ChangeCollation requires -Collation."
     }

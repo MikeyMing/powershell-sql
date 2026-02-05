@@ -77,6 +77,17 @@ function Backup-DbalDatabase {
     $topProgressId = 0
     try { Write-Progress -Id $topProgressId -Activity "Backup $Database on $Instance" -Status 'Initializing...' -PercentComplete 0 } catch {}
 
+    if (-not $DryRun.IsPresent) {
+        try {
+            if (-not (Check-DatabaseAccess -Instance $Instance -Database $Database)) {
+                throw "Database [$Database] does not exist on [$Instance], or you do not have permission to access it."
+            }
+        } catch {
+            $msg = "Preflight failed for backup of [$Database] on [$Instance]. $($_.Exception.Message)"
+            throw (New-Object System.Exception($msg, $_.Exception))
+        }
+    }
+
     # Apply configured defaults when neither backup location is explicitly provided.
     if ([string]::IsNullOrWhiteSpace($BackupPath) -and [string]::IsNullOrWhiteSpace($AzureStorageBackupLocation)) {
         if (-not [string]::IsNullOrWhiteSpace($script:DefaultAzureStorageBackupLocation)) {
