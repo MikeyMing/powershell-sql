@@ -1061,7 +1061,10 @@ function BackupAndRestore {
         [switch]$DryRun,
         [switch]$ResumeFromLatestBackup,
         [switch]$VerboseDiagnostics,
-        [switch]$EnableDbLogging
+        [switch]$EnableDbLogging,
+        [bool]$WaitForActiveQueries = $false,
+        [int]$QueryWaitMaxSeconds = 300,
+        [int]$QueryWaitPollSeconds = 10
     )
 
     $TrustServerCertificate = if ($null -ne $TrustServerCertificate) { [bool]$TrustServerCertificate } else { $false }
@@ -1084,6 +1087,9 @@ function BackupAndRestore {
     $SourceBackupLocation = $null
     $TargetBackupLocation = $null
     $TargetSecuritySnapshot = $null
+    $UsersWithNoLogins = $null
+    $queryWaitSeconds = 0
+    $functionResult = $null
 
     try {
         if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
@@ -1486,6 +1492,35 @@ function BackupAndRestore {
             return
         }
 
+        if ($WaitForActiveQueries) {
+            $queryWaitStart = Get-Date
+            Log -Message "WaitForActiveQueries: checking for active queries on $SourceDatabase on $SourceInstance" -Level Info -WriteToHost
+            $activeQueryCount = 0
+            do {
+                $sqlParams = @{
+                    ServerInstance = $SourceInstance
+                    Database       = 'master'
+                    Query          = "SELECT COUNT(1) AS ActiveQueryCount FROM sys.dm_exec_requests r INNER JOIN sys.dm_exec_sessions s ON s.session_id = r.session_id WHERE r.database_id = DB_ID('$SourceDatabase') AND s.is_user_process = 1 AND r.session_id <> @@SPID"
+                }
+                if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+                    $sqlParams.TrustServerCertificate = $true
+                }
+                $activeQueryCount = [int](Invoke-Sqlcmd @sqlParams | Select-Object -ExpandProperty ActiveQueryCount)
+                if ($activeQueryCount -gt 0) {
+                    $elapsedWait = [int][math]::Round((New-TimeSpan -Start $queryWaitStart -End (Get-Date)).TotalSeconds, 0)
+                    Log -Message "WaitForActiveQueries: $activeQueryCount active quer$(if ($activeQueryCount -eq 1) { 'y' } else { 'ies' }) on $SourceDatabase; waited ${elapsedWait}s; polling again in ${QueryWaitPollSeconds}s" -Level Info -WriteToHost -ForegroundColour Yellow
+                    Start-Sleep -Seconds $QueryWaitPollSeconds
+                }
+            } while ($activeQueryCount -gt 0 -and ((Get-Date) -lt $queryWaitStart.AddSeconds($QueryWaitMaxSeconds)))
+            if ($activeQueryCount -gt 0) {
+                Log -Message "WaitForActiveQueries: timed out waiting for active queries on $SourceDatabase after $QueryWaitMaxSeconds seconds; proceeding anyway." -Level Warning -WriteToHost
+            } else {
+                $elapsedWait = [int][math]::Round((New-TimeSpan -Start $queryWaitStart -End (Get-Date)).TotalSeconds, 0)
+                Log -Message "WaitForActiveQueries: no active queries remaining on $SourceDatabase (waited ${elapsedWait}s)." -Level Info -WriteToHost
+            }
+            $queryWaitSeconds = [int][math]::Round((New-TimeSpan -Start $queryWaitStart -End (Get-Date)).TotalSeconds, 0)
+        }
+
         $BackupPhaseStartTime = Get-Date
         Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore beginning source backup phase for $SourceDatabase on $SourceInstance" -ForegroundColor Cyan
         Write-DebugMessage "[BackupAndRestore] SourceBackupLocation=$(Get-DisplayPath $SourceBackupLocation)"
@@ -1808,6 +1843,29 @@ function BackupAndRestore {
         $ElapsedString = "Elapsed Time: {0}:{1}:{2}" -f $Runtime.Hours, $Runtime.Minutes, $Runtime.Seconds
         Write-DebugMessage "[BackupAndRestore] Finished. $ElapsedString"
         Log -Message "Finished. $ElapsedString" -Level Info -WriteToHost
+
+        $functionResult = [PSCustomObject]@{
+            Status              = 'Success'
+            SourceInstance      = $SourceInstance
+            SourceDatabase      = $SourceDatabase
+            TargetInstance      = $TargetInstance
+            TargetDatabase      = $TargetDatabase
+            StartTime           = $BackupAndRestoreStartTime
+            EndTime             = $BackupAndRestoreEndTime
+            TotalDuration       = $Runtime
+            TotalSeconds        = [int][math]::Round($Runtime.TotalSeconds, 0)
+            QueryWaitSeconds    = $queryWaitSeconds
+            BackupStartTime     = $BackupPhaseStartTime
+            BackupEndTime       = $BackupPhaseEndTime
+            BackupDuration      = if ($BackupPhaseStartTime -and $BackupPhaseEndTime) { New-TimeSpan -Start $BackupPhaseStartTime -End $BackupPhaseEndTime } else { $null }
+            BackupFilePath      = $SourceBackupLocation
+            BackupFileSizeBytes = $SourceBackupSizeBytes
+            RestoreStartTime    = $RestorePhaseStartTime
+            RestoreEndTime      = $RestorePhaseEndTime
+            RestoreDuration     = if ($RestorePhaseStartTime -and $RestorePhaseEndTime) { New-TimeSpan -Start $RestorePhaseStartTime -End $RestorePhaseEndTime } else { $null }
+            UsersWithNoLogins   = $UsersWithNoLogins
+            ErrorMessage        = $null
+        }
     } catch {
         Write-DebugMessage "[BackupAndRestore] ERROR: $($_.Exception.Message)"
         Log -Message "Error. Final catch" -Level "Error" -WriteToHost
@@ -1819,6 +1877,30 @@ function BackupAndRestore {
         $MailSubject = "ERROR in Backup and Restore of $TargetDatabase on $TargetInstance"
         $MailStatus = 'ERROR'
         Write-Host $ErrorDetails -ForegroundColor Red
+
+        $errEndTime = Get-Date
+        $functionResult = [PSCustomObject]@{
+            Status              = 'Failed'
+            SourceInstance      = $SourceInstance
+            SourceDatabase      = $SourceDatabase
+            TargetInstance      = $TargetInstance
+            TargetDatabase      = $TargetDatabase
+            StartTime           = $BackupAndRestoreStartTime
+            EndTime             = $errEndTime
+            TotalDuration       = if ($BackupAndRestoreStartTime) { New-TimeSpan -Start $BackupAndRestoreStartTime -End $errEndTime } else { $null }
+            TotalSeconds        = if ($BackupAndRestoreStartTime) { [int][math]::Round((New-TimeSpan -Start $BackupAndRestoreStartTime -End $errEndTime).TotalSeconds, 0) } else { 0 }
+            QueryWaitSeconds    = $queryWaitSeconds
+            BackupStartTime     = $BackupPhaseStartTime
+            BackupEndTime       = $BackupPhaseEndTime
+            BackupDuration      = if ($BackupPhaseStartTime -and $BackupPhaseEndTime) { New-TimeSpan -Start $BackupPhaseStartTime -End $BackupPhaseEndTime } else { $null }
+            BackupFilePath      = $SourceBackupLocation
+            BackupFileSizeBytes = $SourceBackupSizeBytes
+            RestoreStartTime    = $RestorePhaseStartTime
+            RestoreEndTime      = $RestorePhaseEndTime
+            RestoreDuration     = if ($RestorePhaseStartTime -and $RestorePhaseEndTime) { New-TimeSpan -Start $RestorePhaseStartTime -End $RestorePhaseEndTime } else { $null }
+            UsersWithNoLogins   = $UsersWithNoLogins
+            ErrorMessage        = $errRecord.Exception.Message
+        }
     } finally {
         Write-DebugMessage "[BackupAndRestore] Exit"
         # Print job diagnostics before removing jobs
@@ -1997,6 +2079,7 @@ function BackupAndRestore {
             $lastExit = $Global:LASTEXITCODE
         }
         Write-DiagMessage "(finally) LASTEXITCODE: $lastExit" -ForegroundColor Magenta
+        $functionResult
     }
 }
 

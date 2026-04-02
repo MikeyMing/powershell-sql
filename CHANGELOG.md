@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.38] - 2026-04-07
+
+### Added
+- `BackupAndRestore` now accepts `-WaitForActiveQueries`, `-QueryWaitMaxSeconds` (default 300), and `-QueryWaitPollSeconds` (default 10) parameters. When `-WaitForActiveQueries $true`, the function polls for active user sessions on the source database before beginning the backup, logging elapsed wait time and warning if the timeout is reached.
+- `BackupAndRestore` now returns a `PSCustomObject` with fields: `Status`, `SourceInstance`, `SourceDatabase`, `TargetInstance`, `TargetDatabase`, `StartTime`, `EndTime`, `TotalDuration`, `TotalSeconds`, `QueryWaitSeconds`, `BackupStartTime`, `BackupEndTime`, `BackupDuration`, `BackupFilePath`, `BackupFileSizeBytes`, `RestoreStartTime`, `RestoreEndTime`, `RestoreDuration`, `UsersWithNoLogins`, `ErrorMessage`. Both success and failure paths populate this object.
+
 ## [2.0.37] - 2026-04-02
 
 ### Changed
