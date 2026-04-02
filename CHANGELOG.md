@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.37] - 2026-04-02
+
+### Changed
+- Completed `TrustServerCertificate` propagation in remaining execution paths (`Get-DatabaseState`, backup wrapper paths).
+- Hardened `Progress2` progress parsing/output to avoid terminal conversion failures during long-running jobs.
+- Removed stale post-success `$MailMessage` concatenation that could throw after successful backup/restore.
+- Added explicit heartbeat output around backup/restore phases and job starts for better live visibility.
+
+## [2.0.36] - 2026-04-02
+
+### Changed
+- Fixed undefined `$S` when `-DontCheckSpace` is used.
+- Threaded `-TrustServerCertificate` through background backup/restore job functions.
+
 ## [2.0.5] - 2026-02-05
 
 ### Added
