@@ -1055,6 +1055,7 @@ function BackupAndRestore {
         [bool]$DeleteOrphans = $false,
         [ValidateSet('RollbackImmediate', 'NoWait', 'Wait')][string]$TakeTargetOfflineMode = 'RollbackImmediate',
         [bool]$AbortIfActiveSessions = $false,
+        [System.Nullable[bool]]$TrustServerCertificate,
         [switch]$VerifyBackup,
         [switch]$PreflightOnly,
         [switch]$DryRun,
@@ -1062,6 +1063,10 @@ function BackupAndRestore {
         [switch]$VerboseDiagnostics,
         [switch]$EnableDbLogging
     )
+
+    $TrustServerCertificate = if ($null -ne $TrustServerCertificate) { [bool]$TrustServerCertificate } else { $false }
+    $restoreInvokeSqlcmdTrustDefault = $false
+    $previousInvokeSqlcmdTrustDefault = $null
 
     $MailSubject = $null
     $MailStatus = $null
@@ -1076,9 +1081,19 @@ function BackupAndRestore {
     $TargetDbSpace = $null
     $SourceBackupSizeBytes = $null
     $TargetBackupSizeBytes = $null
+    $SourceBackupLocation = $null
+    $TargetBackupLocation = $null
     $TargetSecuritySnapshot = $null
 
     try {
+        if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+            if ($PSDefaultParameterValues.ContainsKey('Invoke-Sqlcmd:TrustServerCertificate')) {
+                $restoreInvokeSqlcmdTrustDefault = $true
+                $previousInvokeSqlcmdTrustDefault = $PSDefaultParameterValues['Invoke-Sqlcmd:TrustServerCertificate']
+            }
+            $PSDefaultParameterValues['Invoke-Sqlcmd:TrustServerCertificate'] = $true
+        }
+
         $BackupAndRestoreStartTime = Get-Date
         $script:ExecutionID = [guid]::NewGuid().Guid
         $script:DBALibraryVerboseDiagnostics = $VerboseDiagnostics.IsPresent
@@ -1205,7 +1220,7 @@ function BackupAndRestore {
             throw "Invalid parameters"
         }
 
-        if ((Get-DatabaseState -Instance $SourceInstance -Database $SourceDatabase) -ne "ONLINE") {
+        if ((Get-DatabaseState -Instance $SourceInstance -Database $SourceDatabase -TrustServerCertificate $TrustServerCertificate) -ne "ONLINE") {
             Log "The source database must be online" "Error"
             throw "Source database not online"
         }
@@ -1216,14 +1231,14 @@ function BackupAndRestore {
         }
 
         if (-not $CreateDatabase -and -not $Differential) {
-            if ((Get-DatabaseState -Instance $TargetInstance -Database $TargetDatabase) -ne "ONLINE") {
+            if ((Get-DatabaseState -Instance $TargetInstance -Database $TargetDatabase -TrustServerCertificate $TrustServerCertificate) -ne "ONLINE") {
                 Log "The target database must be online" "Error"
                 throw "Target database not online"
             }
         }
 
         if ($Differential) {
-            if ((Get-DatabaseState -Instance $TargetInstance -Database $TargetDatabase) -ne "RESTORING") {
+            if ((Get-DatabaseState -Instance $TargetInstance -Database $TargetDatabase -TrustServerCertificate $TrustServerCertificate) -ne "RESTORING") {
                 Log "-Differential specified and database not in restoring state" "Error"
                 throw "-Differential specified and database not in restoring state"
             }
@@ -1234,8 +1249,8 @@ function BackupAndRestore {
         Log "WaitforManualRestore is $WaitforManualRestore , CreateDatabase is $CreateDatabase , Differential is $Differential"
 
         if (-not $WaitforManualRestore -and -not $CreateDatabase -and -not $Differential) {
-            $SourceInternalVersion = Get-SQLDatabaseInternalVersionNumberFromDatabase -Instance $SourceInstance -Database $SourceDatabase
-            $TargetInternalVersion = Get-SQLDatabaseInternalVersionNumberFromDatabase -Instance $TargetInstance -Database $TargetDatabase
+            $SourceInternalVersion = Get-SQLDatabaseInternalVersionNumberFromDatabase -Instance $SourceInstance -Database $SourceDatabase -TrustServerCertificate $TrustServerCertificate
+            $TargetInternalVersion = Get-SQLDatabaseInternalVersionNumberFromDatabase -Instance $TargetInstance -Database $TargetDatabase -TrustServerCertificate $TrustServerCertificate
             Write-DebugMessage "[BackupAndRestore] SourceInternalVersion=$SourceInternalVersion, TargetInternalVersion=$TargetInternalVersion"
             Log "SourceInternalVersion = $SourceInternalVersion , TargetInternalVersion = $TargetInternalVersion"
             if ($SourceInternalVersion -gt $TargetInternalVersion) {
@@ -1269,9 +1284,9 @@ function BackupAndRestore {
 
         Write-DebugMessage "[BackupAndRestore] Checking databases"
         Log "Checking databases"
-        try { $null = Get-SQLInstanceVersion -InstanceName $TargetInstance } catch { Log "Target Database $TargetDatabase on $TargetInstance is not available" "Error" ; throw }
+        try { $null = Get-SQLInstanceVersion -InstanceName $TargetInstance -TrustServerCertificate $TrustServerCertificate } catch { Log "Target Database $TargetDatabase on $TargetInstance is not available" "Error" ; throw }
         if (-not $CreateDatabase) {
-            try { $null = Get-SQLInstanceVersion -InstanceName $SourceInstance } catch { Log "Source Database $SourceDatabase on $SourceInstance is not available" "Error" ; throw }
+            try { $null = Get-SQLInstanceVersion -InstanceName $SourceInstance -TrustServerCertificate $TrustServerCertificate } catch { Log "Source Database $SourceDatabase on $SourceInstance is not available" "Error" ; throw }
         }
 
         if ($CreateDatabase) {
@@ -1339,6 +1354,7 @@ function BackupAndRestore {
         Write-DebugMessage "[BackupAndRestore] Compression=$Compress"
         Log "Compression = $Compress"
 
+        $S = $null
         if (-not $DontCheckSpace -and -not $Differential) {
             $S = Get-FileListFromDatabase -Instance $SourceInstance -Database $SourceDatabase
             Write-DiagMessage ($S | Out-String)
@@ -1465,18 +1481,20 @@ function BackupAndRestore {
         Get-Confirmation -Msg $ConfirmMessage -BatchMode $BatchMode
 
         if ($PreflightOnly.IsPresent) {
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore preflight passed for $SourceDatabase -> $TargetDatabase" -ForegroundColor Green
             Log -Message "PreflightOnly specified: checks passed; skipping backup/restore execution." -Level Info -WriteToHost
             return
         }
 
         $BackupPhaseStartTime = Get-Date
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore beginning source backup phase for $SourceDatabase on $SourceInstance" -ForegroundColor Cyan
         Write-DebugMessage "[BackupAndRestore] SourceBackupLocation=$(Get-DisplayPath $SourceBackupLocation)"
         Log "Source Backup location = $(Get-DisplayPath $SourceBackupLocation)"
         if ($NoRecovery -or $RollForwardTransactionLogs) { $CopyOnly = $false }
         if (-not $ResumeSourceBackup) {
             Write-DebugMessage "[BackupAndRestore] Creating backup job for $SourceDatabase on $SourceInstance"
             $progressMatch = if ($SourceBackupLocation -match '^https://') { ($SourceBackupLocation.Split('?', 2)[0] | Split-Path -Leaf) } else { $SourceBackupLocation }
-            $NewJob = Backup-Database -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $SourceBackupLocation -ProgressID 1 -Compress $Compress -JobName "SourceBackup" -Differential $Differential -CopyOnly $CopyOnly -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $progressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
+            $NewJob = Backup-Database -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $SourceBackupLocation -ProgressID 1 -Compress $Compress -JobName "SourceBackup" -Differential $Differential -CopyOnly $CopyOnly -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $progressMatch -CredentialName $azureCredentialName -TrustServerCertificate $TrustServerCertificate -DryRun:$DryRun
             Write-DebugMessage "[BackupAndRestore] Backup job created: $($NewJob | Out-String)"
             if (-not $DryRun) { $Jobs += $NewJob }
         }
@@ -1500,15 +1518,16 @@ function BackupAndRestore {
             Read-Host -Prompt "Press any key when manual restore on intermediate is complete"
             Log "Input received. Continuing"
             Check-DatabaseAccess -Instance $IntermediateInstance -Database $TargetDatabase
-            Backup-Database -InstanceName $IntermediateInstance -DatabaseName $TargetDatabase -BackupPath $IntermediateBackupLocation -Compress $Compress -ProgressID 7 -JobName "BackupIntermediate" -CopyOnly $true -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -CredentialName $azureCredentialName
+            Backup-Database -InstanceName $IntermediateInstance -DatabaseName $TargetDatabase -BackupPath $IntermediateBackupLocation -Compress $Compress -ProgressID 7 -JobName "BackupIntermediate" -CopyOnly $true -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -CredentialName $azureCredentialName -TrustServerCertificate $TrustServerCertificate
             Progress -Job "BackupIntermediate" -Id 7 -Path $IntermediateBackupLocation -Instance $IntermediateInstance -Database $TargetDatabase
         }
 
         if (-not $DontBackupTarget -and -not $Differential) {
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore also backing up target database $TargetDatabase on $TargetInstance before overwrite" -ForegroundColor Cyan
             Write-DebugMessage "[BackupAndRestore] TargetBackupLocation=$TargetBackupLocation"
             Log "TargetBackupLocation = $TargetBackupLocation"
             $targetProgressMatch = if ($TargetBackupLocation -match '^https://') { ($TargetBackupLocation.Split('?', 2)[0] | Split-Path -Leaf) } else { $TargetBackupLocation }
-            $TargetJob = Backup-Database -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $TargetBackupLocation -ProgressID 2 -Compress $Compress -JobName "TargetBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $targetProgressMatch -CredentialName $azureCredentialName -DryRun:$DryRun
+            $TargetJob = Backup-Database -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $TargetBackupLocation -ProgressID 2 -Compress $Compress -JobName "TargetBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -ProgressMatch $targetProgressMatch -CredentialName $azureCredentialName -TrustServerCertificate $TrustServerCertificate -DryRun:$DryRun
             Write-DebugMessage "[BackupAndRestore] Target backup job created: $($TargetJob | Out-String)"
             if (-not $DryRun) { $Jobs += $TargetJob }
         }
@@ -1521,7 +1540,7 @@ function BackupAndRestore {
                 $null = Invoke-DbalVerifyBackup -Instance $TargetInstance -BackupPath $AmendedSourceBackupLocation -CredentialName $azureCredentialName -DryRun
             }
 
-            $null = Restore-SQLDatabase -InstanceName $TargetInstance -DatabaseName $TargetDatabase -TakeInstanceOffline $TakeTargetOffline -TakeInstanceOfflineMode $TakeTargetOfflineMode -BackupPath $AmendedSourceBackupLocation -JobName "RestoreTarget" -NoRecovery $restoreNoRecovery -CreateDatabase $CreateDatabase -SourceDatabase $SourceDatabase -Differential $Differential -CredentialName $azureCredentialName -SourceFileList $S -DryRun
+            $null = Restore-SQLDatabase -InstanceName $TargetInstance -DatabaseName $TargetDatabase -TakeInstanceOffline $TakeTargetOffline -TakeInstanceOfflineMode $TakeTargetOfflineMode -BackupPath $AmendedSourceBackupLocation -JobName "RestoreTarget" -NoRecovery $restoreNoRecovery -CreateDatabase $CreateDatabase -SourceDatabase $SourceDatabase -Differential $Differential -CredentialName $azureCredentialName -SourceFileList $S -TrustServerCertificate $TrustServerCertificate -DryRun
 
             Log -Message "DryRun specified: generated BACKUP/RESTORE SQL above; skipping execution." -Level Info
             return
@@ -1531,6 +1550,7 @@ function BackupAndRestore {
         Progress2 -JobDetailsCollection $Jobs
         Write-DiagMessage "Progress2 for backup jobs returned." -ForegroundColor Cyan
         $BackupPhaseEndTime = Get-Date
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore backup phase finished for $SourceDatabase" -ForegroundColor Green
 
         $SourceBackupSizeBytes = Get-DbalFileSizeBytes -Path $SourceBackupLocation
         if (-not $DontBackupTarget -and -not $Differential) {
@@ -1565,7 +1585,8 @@ function BackupAndRestore {
             }
 
             $RestorePhaseStartTime = Get-Date
-            $NewJob = Restore-SQLDatabase -InstanceName $TargetInstance -DatabaseName $TargetDatabase -TakeInstanceOffline $TakeTargetOffline -TakeInstanceOfflineMode $TakeTargetOfflineMode -BackupPath $AmendedSourceBackupLocation -JobName "RestoreTarget" -NoRecovery $restoreNoRecovery -CreateDatabase $CreateDatabase -SourceDatabase $SourceDatabase -Differential $Differential -CredentialName $azureCredentialName -SourceFileList $S
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore beginning restore phase for $TargetDatabase on $TargetInstance" -ForegroundColor Cyan
+            $NewJob = Restore-SQLDatabase -InstanceName $TargetInstance -DatabaseName $TargetDatabase -TakeInstanceOffline $TakeTargetOffline -TakeInstanceOfflineMode $TakeTargetOfflineMode -BackupPath $AmendedSourceBackupLocation -JobName "RestoreTarget" -NoRecovery $restoreNoRecovery -CreateDatabase $CreateDatabase -SourceDatabase $SourceDatabase -Differential $Differential -CredentialName $azureCredentialName -SourceFileList $S -TrustServerCertificate $TrustServerCertificate
             Write-DebugMessage "[BackupAndRestore] Restore job created: $($NewJob | Out-String)"
             $RestoreJobs = @()
             $RestoreJobs += $NewJob
@@ -1573,6 +1594,7 @@ function BackupAndRestore {
             Progress2 -JobDetailsCollection $RestoreJobs
             Write-DiagMessage "Progress2 for restore jobs returned." -ForegroundColor Cyan
             $RestorePhaseEndTime = Get-Date
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] BackupAndRestore restore phase finished for $TargetDatabase" -ForegroundColor Green
             Write-DebugMessage "[BackupAndRestore] Restore finished"
             Log "Restore finished"
 
@@ -1612,13 +1634,14 @@ function BackupAndRestore {
             # Always apply at least one log backup, then ask if we're ready to finalize.
             while ($true) {
                 $cycle++
+                Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RollForwardTransactionLogs cycle $cycle for $SourceDatabase -> $TargetDatabase" -ForegroundColor Cyan
                 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
                 $logBackupPath = Join-Path $logBackupDirectory "$SourceDatabase`_adhoc_LOG_$timestamp.trn"
 
-                $logBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $logBackupPath -ProgressID 101 -JobName "SourceLogBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize
+                $logBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $logBackupPath -ProgressID 101 -JobName "SourceLogBackup" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -TrustServerCertificate $TrustServerCertificate
                 Progress2 -JobDetailsCollection @($logBackupJob)
 
-                $restoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $logBackupPath -NoRecovery $true -JobName "RestoreTargetLog"
+                $restoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $logBackupPath -NoRecovery $true -JobName "RestoreTargetLog" -TrustServerCertificate $TrustServerCertificate
                 Progress2 -JobDetailsCollection @($restoreLogJob)
 
                 $maxReached = ($MaxLogBackupCycles -gt 0 -and $cycle -ge $MaxLogBackupCycles)
@@ -1636,11 +1659,12 @@ function BackupAndRestore {
             }
 
             $finalTimestamp = Get-Date -Format 'yyyyMMddHHmmss'
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Performing final transaction log backup and recovery for $TargetDatabase" -ForegroundColor Cyan
             $finalLogBackupPath = Join-Path $logBackupDirectory "$SourceDatabase`_adhoc_LOGFINAL_$finalTimestamp.trn"
-            $finalLogBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $finalLogBackupPath -ProgressID 102 -JobName "SourceLogBackupFinal" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize
+            $finalLogBackupJob = Backup-TransactionLog -InstanceName $SourceInstance -DatabaseName $SourceDatabase -BackupPath $finalLogBackupPath -ProgressID 102 -JobName "SourceLogBackupFinal" -BlockSize $effectiveBlockSize -BufferCount $effectiveBufferCount -MaxTransferSize $effectiveMaxTransferSize -TrustServerCertificate $TrustServerCertificate
             Progress2 -JobDetailsCollection @($finalLogBackupJob)
 
-            $finalRestoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $finalLogBackupPath -NoRecovery $false -JobName "RestoreTargetLogFinal"
+            $finalRestoreLogJob = Restore-SQLTransactionLog -InstanceName $TargetInstance -DatabaseName $TargetDatabase -BackupPath $finalLogBackupPath -NoRecovery $false -JobName "RestoreTargetLogFinal" -TrustServerCertificate $TrustServerCertificate
             Progress2 -JobDetailsCollection @($finalRestoreLogJob)
 
             # Ensure post-restore steps run.
@@ -1784,7 +1808,6 @@ function BackupAndRestore {
         $ElapsedString = "Elapsed Time: {0}:{1}:{2}" -f $Runtime.Hours, $Runtime.Minutes, $Runtime.Seconds
         Write-DebugMessage "[BackupAndRestore] Finished. $ElapsedString"
         Log -Message "Finished. $ElapsedString" -Level Info -WriteToHost
-        $MailMessage = "$ElapsedString`n" + $MailMessage + $NoLoginsString
     } catch {
         Write-DebugMessage "[BackupAndRestore] ERROR: $($_.Exception.Message)"
         Log -Message "Error. Final catch" -Level "Error" -WriteToHost
@@ -1960,9 +1983,20 @@ function BackupAndRestore {
         } else {
             Log -Message "BackupAndRestore: completion email skipped (MailSubject is null)." -Level Warning -WriteToHost
         }
+        if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+            if ($restoreInvokeSqlcmdTrustDefault) {
+                $PSDefaultParameterValues['Invoke-Sqlcmd:TrustServerCertificate'] = $previousInvokeSqlcmdTrustDefault
+            } else {
+                $null = $PSDefaultParameterValues.Remove('Invoke-Sqlcmd:TrustServerCertificate')
+            }
+        }
         Log "Finished."
         Write-DiagMessage "(finally) Error variable: $($Error | Out-String)" -ForegroundColor Magenta
-        Write-DiagMessage "(finally) LASTEXITCODE: $LASTEXITCODE" -ForegroundColor Magenta
+        $lastExit = $null
+        if (Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue) {
+            $lastExit = $Global:LASTEXITCODE
+        }
+        Write-DiagMessage "(finally) LASTEXITCODE: $lastExit" -ForegroundColor Magenta
     }
 }
 
@@ -1996,10 +2030,14 @@ function Get-DatabaseState {
     .SYNOPSIS
         Gets the state of a database.
     #>
-    param ($Instance, $Database)
+    param ($Instance, $Database, [bool]$TrustServerCertificate = $false)
 
     $DatabaseStateSQL = "SELECT state_desc FROM sys.databases WHERE name = '$Database'"
-    (Invoke-Sqlcmd -ServerInstance $Instance -Query $DatabaseStateSQL).state_desc
+    $sqlParams = @{ ServerInstance = $Instance; Query = $DatabaseStateSQL }
+    if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+        $sqlParams.TrustServerCertificate = $true
+    }
+    (Invoke-Sqlcmd @sqlParams).state_desc
 }
 
 function Get-SQLDatabaseInternalVersionNumberFromDatabase {
@@ -2007,11 +2045,15 @@ function Get-SQLDatabaseInternalVersionNumberFromDatabase {
     .SYNOPSIS
         Gets internal version number from a database.
     #>
-    param ($Instance, $Database)
+    param ($Instance, $Database, [bool]$TrustServerCertificate = $false)
 
     try {
         $InternalVersionSQL = "SELECT DATABASEPROPERTYEX('$Database','Version') AS InternalVersion"
-        (Invoke-Sqlcmd -ServerInstance $Instance -Database $Database -Query $InternalVersionSQL).InternalVersion
+        $sqlParams = @{ ServerInstance = $Instance; Database = $Database; Query = $InternalVersionSQL }
+        if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+            $sqlParams.TrustServerCertificate = $true
+        }
+        (Invoke-Sqlcmd @sqlParams).InternalVersion
     } catch {
         Log "Error getting internal version" -Level Error
         throw
@@ -2043,9 +2085,13 @@ function Get-SQLInstanceVersion {
     .SYNOPSIS
         Gets SQL instance version.
     #>
-    param ([string]$InstanceName)
+    param ([string]$InstanceName, [bool]$TrustServerCertificate = $false)
 
-    (Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query "SELECT @@VERSION AS Version").Version
+    $sqlParams = @{ ServerInstance = $InstanceName; Database = 'master'; Query = "SELECT @@VERSION AS Version" }
+    if ($TrustServerCertificate -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+        $sqlParams.TrustServerCertificate = $true
+    }
+    (Invoke-Sqlcmd @sqlParams).Version
 }
 
 function Get-ProductName {
@@ -2552,12 +2598,14 @@ function Backup-Database {
         [string]$MaxTransferSize = '2097152',
         [string]$ProgressMatch,
         [string]$CredentialName,
+        [bool]$TrustServerCertificate = $false,
         [switch]$DryRun
     )
 
     try {
         Log "In Backup-Database"
         Log "BackupPath = $(Get-DisplayPath $BackupPath)"
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Starting BACKUP job for $DatabaseName on $InstanceName to $(Get-DisplayPath $BackupPath)" -ForegroundColor Cyan
         $isUrl = ($BackupPath -match '^https://')
         $to = if ($isUrl) { 'URL' } else { 'DISK' }
         $effectivePath = if ($isUrl -and -not [string]::IsNullOrWhiteSpace($CredentialName)) { $BackupPath.Split('?', 2)[0] } else { $BackupPath }
@@ -2587,9 +2635,14 @@ function Backup-Database {
         }
 
         $Job = Start-Job -Name $JobName -ScriptBlock {
+            param($inst, $query, $trustCert)
             Import-Module SqlServer
-            Invoke-Sqlcmd -ServerInstance $args[0] -Query $args[1] -QueryTimeout 65535 -AbortOnError
-        } -ArgumentList $InstanceName, $BackupSQL
+            if ($trustCert -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+                Invoke-Sqlcmd -ServerInstance $inst -Query $query -QueryTimeout 65535 -AbortOnError -TrustServerCertificate
+            } else {
+                Invoke-Sqlcmd -ServerInstance $inst -Query $query -QueryTimeout 65535 -AbortOnError
+            }
+        } -ArgumentList $InstanceName, $BackupSQL, $TrustServerCertificate
         $match = if (-not [string]::IsNullOrWhiteSpace($ProgressMatch)) { $ProgressMatch } else { $BackupPath }
         @{Job = $Job ; Instance = $InstanceName ; Database = $DatabaseName ; Path = $BackupPath ; CmdString = $match ; JobType = "BackupRestore" ; Id = Get-NextProgressId }
     } catch {
@@ -2612,12 +2665,14 @@ function Backup-TransactionLog {
         [string]$BlockSize = '65536',
         [string]$BufferCount = '50',
         [string]$MaxTransferSize = '2097152',
-        [string]$ProgressMatch
+        [string]$ProgressMatch,
+        [bool]$TrustServerCertificate = $false
     )
 
     try {
         Log "In Backup-TransactionLog"
         Log "BackupPath = $(Get-DisplayPath $BackupPath)"
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Starting LOG BACKUP job for $DatabaseName on $InstanceName to $(Get-DisplayPath $BackupPath)" -ForegroundColor Cyan
         $BackupSQL = "BACKUP LOG [$DatabaseName] TO DISK = '$BackupPath' WITH BUFFERCOUNT = $BufferCount ,MAXTRANSFERSIZE = $MaxTransferSize ,BLOCKSIZE = $BlockSize "
         if ($script:DBALibraryVerboseDiagnostics) {
             Write-DiagMessage $BackupSQL
@@ -2625,9 +2680,14 @@ function Backup-TransactionLog {
         Log $InstanceName
 
         $Job = Start-Job -Name $JobName -ScriptBlock {
+            param($inst, $query, $trustCert)
             Import-Module SqlServer
-            Invoke-Sqlcmd -ServerInstance $args[0] -Query $args[1] -QueryTimeout 65535 -AbortOnError
-        } -ArgumentList $InstanceName, $BackupSQL
+            if ($trustCert -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+                Invoke-Sqlcmd -ServerInstance $inst -Query $query -QueryTimeout 65535 -AbortOnError -TrustServerCertificate
+            } else {
+                Invoke-Sqlcmd -ServerInstance $inst -Query $query -QueryTimeout 65535 -AbortOnError
+            }
+        } -ArgumentList $InstanceName, $BackupSQL, $TrustServerCertificate
         $match = if (-not [string]::IsNullOrWhiteSpace($ProgressMatch)) { $ProgressMatch } else { $BackupPath }
         @{Job = $Job ; Instance = $InstanceName ; Database = $DatabaseName ; Path = $BackupPath ; CmdString = $match ; JobType = "BackupRestore" ; Id = Get-NextProgressId }
     } catch {
@@ -2646,11 +2706,13 @@ function Restore-SQLTransactionLog {
         [string]$DatabaseName,
         [string]$BackupPath,
         [bool]$NoRecovery,
-        [string]$JobName
+        [string]$JobName,
+        [bool]$TrustServerCertificate = $false
     )
 
     try {
         Log "[Restore-SQLTransactionLog] InstanceName=$InstanceName DatabaseName=$DatabaseName BackupPath=$(Get-DisplayPath $BackupPath) NoRecovery=$NoRecovery"
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Starting LOG RESTORE job for $DatabaseName on $InstanceName from $(Get-DisplayPath $BackupPath)" -ForegroundColor Cyan
         $recoveryClause = if ($NoRecovery) { 'NORECOVERY' } else { 'RECOVERY' }
         $RestoreSQL = "RESTORE LOG [$DatabaseName] FROM DISK = '$BackupPath' WITH STATS = 5, $recoveryClause"
         Log "[Restore-SQLTransactionLog] $RestoreSQL"
@@ -2659,10 +2721,14 @@ function Restore-SQLTransactionLog {
         }
 
         $Job = Start-Job -Name $JobName -ScriptBlock {
-            param($InstanceName, $RestoreSQL)
+            param($InstanceName, $RestoreSQL, $trustCert)
             Import-Module SqlServer
-            Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop
-        } -ArgumentList $InstanceName, $RestoreSQL
+            if ($trustCert -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+                Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop -TrustServerCertificate
+            } else {
+                Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop
+            }
+        } -ArgumentList $InstanceName, $RestoreSQL, $TrustServerCertificate
 
         @{Job = $Job ; Instance = $InstanceName ; Database = $DatabaseName ; Path = $BackupPath ; CmdString = $BackupPath ; JobType = "BackupRestore" ; Id = Get-NextProgressId }
     } catch {
@@ -2687,6 +2753,7 @@ function Progress2 {
         $startTime = Get-Date
         Write-DebugMessage "[Progress2] Monitoring jobs: $($JobDetailsCollection | ForEach-Object { $_.Job.Name })"
         $timedOut = $false
+        $I = 0
 
         foreach ($Job in $JobDetailsCollection) {
             try {
@@ -2726,26 +2793,38 @@ function Progress2 {
                     # Progress2 only needs a single snapshot per iteration, so force Interval=0.
                     $cmd = if ($Job.CmdString) { $Job.CmdString } else { $Job.Path }
                     $BackupProgress = Get-BackupRestoreProgress -Instance $Job.Instance -CmdString $cmd -Interval 0
-                    if ($null -eq $BackupProgress -or $null -eq $BackupProgress.PercentComplete) {
+                    $progressRow = @($BackupProgress) | Select-Object -First 1
+                    $bpProps = if ($null -ne $progressRow) { @($progressRow.PSObject.Properties) } else { @() }
+                    $percentProp = $bpProps | Where-Object Name -eq 'PercentComplete' | Select-Object -First 1
+                    $etaProp = $bpProps | Where-Object Name -eq 'ETACompletionTime' | Select-Object -First 1
+                    $etaMinProp = $bpProps | Where-Object Name -eq 'ETAMin' | Select-Object -First 1
+                    $elapsedProp = $bpProps | Where-Object Name -eq 'ElapsedMin' | Select-Object -First 1
+                    if ($null -eq $progressRow -or $null -eq $percentProp) {
                         $PercentComplete = 0
                     } else {
-                        $PercentComplete = $BackupProgress.PercentComplete
+                        $percentRaw = $percentProp.Value
+                        $percentParsed = 0.0
+                        if ([double]::TryParse([string]$percentRaw, [ref]$percentParsed)) {
+                            $PercentComplete = $percentParsed
+                        } else {
+                            $PercentComplete = 0
+                        }
                     }
                     $NoBackupProgress = if ($PercentComplete -eq 0) { " No information on progress yet, please wait. " } else { "" }
-                    if ($null -eq $BackupProgress.ETACompletionTime) {
+                    if ($null -eq $etaProp) {
                         $ETA = "Unknown"
                     } else {
-                        $ETA = $BackupProgress.ETACompletionTime
+                        $ETA = $etaProp.Value
                     }
-                    if ($null -eq $BackupProgress.ETAMin) {
+                    if ($null -eq $etaMinProp) {
                         $ETAMin = "Unknown"
                     } else {
-                        $ETAMin = $BackupProgress.ETAMin
+                        $ETAMin = $etaMinProp.Value
                     }
-                    if ($null -eq $BackupProgress.ElapsedMin) {
+                    if ($null -eq $elapsedProp) {
                         $ElapsedMin = "Unknown"
                     } else {
-                        $ElapsedMin = $BackupProgress.ElapsedMin
+                        $ElapsedMin = $elapsedProp.Value
                     }
                     if ($I % 4 -eq 0) {
                         Log "Percent Complete = $PercentComplete, ETA = $ETA (in $ETAMin minutes)"
@@ -2757,11 +2836,17 @@ function Progress2 {
                     }
                     $PercentCompleteInt = 0
                     try {
-                        $PercentCompleteInt = [int]([double]$PercentComplete)
+                        $PercentCompleteInt = [int]([math]::Round([double]$PercentComplete, 0))
                     } catch {
                         $PercentCompleteInt = 0
                     }
-                    Write-Progress -Id $Job.Id -Activity "$($Job.Job.Name) on $($Job.Database) on $($Job.Instance) to $($Job.Path)" -PercentComplete $PercentCompleteInt -Status "$NoBackupProgress Complete = $PercentComplete, ETA = $ETA (in $ETAMin minutes). $ElapsedMin minutes elapsed."
+                    if ($PercentCompleteInt -lt 0) { $PercentCompleteInt = 0 }
+                    if ($PercentCompleteInt -gt 100) { $PercentCompleteInt = 100 }
+                    try {
+                        Write-Progress -Id $Job.Id -Activity "$($Job.Job.Name) on $($Job.Database) on $($Job.Instance) to $($Job.Path)" -PercentComplete $PercentCompleteInt -Status "$NoBackupProgress Complete = $PercentComplete, ETA = $ETA (in $ETAMin minutes). $ElapsedMin minutes elapsed."
+                    } catch {
+                        Write-Host "[Progress2] Progress bar update skipped for job $($Job.Job.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+                    }
                 }
             } # End foreach
             # Timeout check for all jobs
@@ -3359,11 +3444,13 @@ function Restore-SQLDatabase {
         [bool]$Differential,
         [string]$CredentialName,
         [ValidateSet('RollbackImmediate', 'NoWait', 'Wait')][string]$TakeInstanceOfflineMode = 'RollbackImmediate',
+        [bool]$TrustServerCertificate = $false,
         [switch]$DryRun
     )
 
     try {
         Log "[Restore-SQLDatabase] TakeInstanceOffline is $TakeInstanceOffline , InstanceName is $InstanceName , DatabaseName is $DatabaseName , BackupPath is $(Get-DisplayPath $BackupPath) , NoRecovery is $NoRecovery , JobName is $JobName , CreateDatabase is $CreateDatabase , SourceDatabase is $SourceDatabase , Differential is $Differential"
+        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Starting DATABASE RESTORE job for $DatabaseName on $InstanceName from $(Get-DisplayPath $BackupPath)" -ForegroundColor Cyan
         Write-DebugMessage "[Restore-SQLDatabase] Starting restore logic"
         Write-DebugMessage "[Restore-SQLDatabase] About to set MoveFiles=''"
         $MoveFiles = ""
@@ -3465,12 +3552,16 @@ function Restore-SQLDatabase {
 
         Write-DebugMessage "[Restore-SQLDatabase] About to start restore job"
         $Job = Start-Job -Name $JobName -ScriptBlock {
-            param($InstanceName, $RestoreSQL, $RestoreSQLDisplay)
+            param($InstanceName, $RestoreSQL, $RestoreSQLDisplay, $trustCert)
             Write-Host "[Restore-SQLDatabase] Running restore in job: $RestoreSQLDisplay" -ForegroundColor Cyan
             Import-Module SqlServer
             try {
                 Write-Host "[Restore-SQLDatabase] Invoking Sqlcmd for restore" -ForegroundColor Cyan
-                Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop
+                if ($trustCert -and (Get-Command Invoke-Sqlcmd).Parameters.ContainsKey('TrustServerCertificate')) {
+                    Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop -TrustServerCertificate
+                } else {
+                    Invoke-Sqlcmd -ServerInstance $InstanceName -Database master -Query $RestoreSQL -QueryTimeout 65535 -ErrorAction Stop
+                }
                 Write-Host "[Restore-SQLDatabase] Restore completed successfully." -ForegroundColor Green
             } catch {
                 Write-Host "[Restore-SQLDatabase] ERROR: $($_.Exception.Message)" -ForegroundColor Red
@@ -3478,7 +3569,7 @@ function Restore-SQLDatabase {
                 throw
             }
             Write-Host "[Restore-SQLDatabase] Restore job script block end" -ForegroundColor Cyan
-        } -ArgumentList $InstanceName, $RestoreSQL, $displayRestoreSql
+        } -ArgumentList $InstanceName, $RestoreSQL, $displayRestoreSql, $TrustServerCertificate
         Write-DebugMessage "[Restore-SQLDatabase] Job started: $($Job.Id) State: $($Job.State) Name: $($Job.Name)"
         Write-DebugMessage "[Restore-SQLDatabase] Returning job object"
         $match = if ($isUrl) { ($effectivePath | Split-Path -Leaf) } else { $BackupPath }
@@ -3968,7 +4059,8 @@ function Backup {
         [bool]$MarkAsRetain = $false,
         [bool]$Differential = $false,
         [string]$BackupPath,
-        [switch]$BackupToNul
+        [switch]$BackupToNul,
+        [bool]$TrustServerCertificate = $false
     )
 
     try {
@@ -3978,7 +4070,7 @@ function Backup {
         Log "Starting"
         Log $Params
 
-        if ((Get-DatabaseState -Instance $Instance -Database $Database) -eq "RESTORING") {
+        if ((Get-DatabaseState -Instance $Instance -Database $Database -TrustServerCertificate $TrustServerCertificate) -eq "RESTORING") {
             Log "Database in RESTORING state." "Error"
             throw "Database in RESTORING state cannot be backed up. Use 'RESTORE DATABASE $Database' and try again."
         }
@@ -3989,7 +4081,7 @@ function Backup {
         $BackupLocation = if ($BackupToNul) { "nul" } else { Get-BackupLocation -InstanceName $Instance -DatabaseName $Database -CreateIfNotExist $true -MarkAsRetain $MarkAsRetain -Differential $Differential -BackupLocation $BackupPath }
         Log $BackupLocation
 
-        $Jobs = Backup-Database -InstanceName $Instance -DatabaseName $Database -BackupPath $BackupLocation -Compress $CompressIfPossible -JobName "Backup" -CopyOnly $CopyOnly -Differential $Differential
+        $Jobs = Backup-Database -InstanceName $Instance -DatabaseName $Database -BackupPath $BackupLocation -Compress $CompressIfPossible -JobName "Backup" -CopyOnly $CopyOnly -Differential $Differential -TrustServerCertificate $TrustServerCertificate
         Progress2 -JobDetailsCollection @($Jobs)
 
         if (-not $BackupToNul) { Check-Backup -Instance $Instance -Database $Database -BackupLocation $BackupLocation -Verify $Verify }
